@@ -2,22 +2,82 @@
 
 console.log('Background service worker started.');
 
+// We no longer use an in-memory Set
+// const readyTabs = new Set();
+
+// Helper function to get ready tabs from storage
+async function getReadyTabs() {
+  try {
+    const data = await chrome.storage.session.get('readyTabs');
+    // Ensure we return a Set, even if nothing is in storage yet
+    return new Set(data.readyTabs || []); 
+  } catch (error) {
+    console.error("Background: Error getting readyTabs from storage:", error);
+    return new Set(); // Return empty set on error
+  }
+}
+
+// Helper function to save ready tabs to storage
+async function saveReadyTabs(tabsSet) {
+  try {
+    // Convert Set to Array for storage
+    await chrome.storage.session.set({ readyTabs: Array.from(tabsSet) });
+  } catch (error) {
+    console.error("Background: Error saving readyTabs to storage:", error);
+  }
+}
+
 // Listen for messages from the content script or popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  console.log('Background script received message:', message, 'from sender:', sender);
+  console.log("Background received message:", message, "from sender:", sender);
 
-  if (message.type === 'ERROR_DETECTED') {
+  if (message.type === 'CONTENT_SCRIPT_READY') {
+    if (sender.tab && sender.tab.id) {
+      const tabId = sender.tab.id;
+      console.log(`Background: CONTENT_SCRIPT_READY received for tab ${tabId}`);
+      getReadyTabs().then(currentTabs => {
+        if (!currentTabs.has(tabId)) {
+          currentTabs.add(tabId);
+          saveReadyTabs(currentTabs).then(() => {
+              console.log(`Background: Added tab ${tabId} to storage. Current ready tabs:`, Array.from(currentTabs));
+              sendResponse({ status: "ok" });
+          });
+        } else {
+          console.log(`Background: Tab ${tabId} already in ready set.`);
+          sendResponse({ status: "already_ok" });
+        }
+      });
+    } else {
+       console.warn("Background: Received CONTENT_SCRIPT_READY from non-tab sender?", sender);
+       sendResponse({ status: "error", reason: "No sender tab ID"});
+    }
+    return true; // Indicate async response needed
+  } else if (message.type === 'CHECK_CONTENT_SCRIPT_READY') {
+    if (message.tabId) {
+      const tabIdToCheck = message.tabId;
+      getReadyTabs().then(currentTabs => {
+          const isReady = currentTabs.has(tabIdToCheck);
+          console.log("Background: Current readyTabs Set from storage:", currentTabs);
+          console.log(`Background: Checking readiness for tab ${tabIdToCheck}. Is ready: ${isReady}`);
+          sendResponse({ ready: isReady });
+      });
+    } else {
+      console.warn("Background: Received CHECK_CONTENT_SCRIPT_READY without tabId.");
+      sendResponse({ ready: false, error: "No tabId provided" });
+    }
+    return true; // Indicate async response needed
+  } else if (message.type === 'ERROR_DETECTED') {
     console.log('Forwarding ERROR_DETECTED message to runtime (side panel should pick it up).');
     // Forward the message to other listeners (like the side panel)
-    chrome.runtime.sendMessage(message).catch(error => {
-      // Catch errors, e.g., if the side panel isn't open
-      if (error.message !== "Could not establish connection. Receiving end does not exist.") {
-        console.error("Error forwarding message from background:", error);
-      }
+    chrome.runtime.sendMessage({ type: 'ERROR_DETECTED', payload: message.payload }).catch(error => {
+        if (error.message.includes("Receiving end does not exist")) {
+            console.warn("Background: Side panel not open or listening when forwarding ERROR_DETECTED.");
+        } else {
+            console.error("Background: Error forwarding ERROR_DETECTED:", error);
+        }
     });
-    // Optional: send response back to content script if needed
-    sendResponse({ status: "Message received by background" });
-    return true; // Indicates you wish to send a response asynchronously (or just keep channel open)
+    sendResponse({ status: "forwarded" }); 
+    return true; 
   }
 
   if (message.action === 'captureScreenshot') {
@@ -188,21 +248,14 @@ chrome.action.onClicked.addListener((tab) => {
   }
 });
 
-// Send a message to force splash screen transition after a delay
-setTimeout(() => {
-  console.log('Sending forceSplashTransition message');
-  try {
-    chrome.runtime.sendMessage({ action: 'forceSplashTransition' })
-      .catch(error => {
-        // Ignore "Receiving end does not exist" errors
-        if (!error.message.includes("Receiving end does not exist")) {
-          console.error('Error sending message:', error);
+// Clean up storage when tabs are closed
+chrome.tabs.onRemoved.addListener((tabId) => {
+    getReadyTabs().then(currentTabs => {
+        if (currentTabs.has(tabId)) {
+            currentTabs.delete(tabId);
+            saveReadyTabs(currentTabs).then(() => {
+                 console.log(`Background: Removed closed tab ${tabId} from storage.`);
+            });
         }
-      });
-  } catch (error) {
-    // Ignore "Receiving end does not exist" errors
-    if (!error.message.includes("Receiving end does not exist")) {
-      console.error('Error sending message:', error);
-    }
-  }
-}, 3000);
+    });
+});

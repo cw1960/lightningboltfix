@@ -26,7 +26,8 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
   const [copyButtonText, setCopyButtonText] = useState('Copy Fixed Code'); // State for button text
   const [activeTab, setActiveTab] = useState('fix'); // Add state for active tab ('fix', 'settings', 'analytics')
   const [fixSavedCounter, setFixSavedCounter] = useState(0); // <-- Add counter state
-  const [isPickingElement, setIsPickingElement] = useState(false); // State for picker mode
+  const [isPickingElement, setIsPickingElement] = useState(false); // State for error picker mode
+  const [isPickingCode, setIsPickingCode] = useState(false); // State for code picker mode
 
   // --- Message Listener Effect ---
   useEffect(() => {
@@ -36,10 +37,12 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
       if (message.type === 'ELEMENT_PICKED') {
         console.log("Received picked element text:", message.payload);
         setErrorMessage(message.payload);
-        setIsPickingElement(false); // Turn off picker mode in UI
+        setIsPickingElement(false); // Turn off error picker mode
+      } else if (message.type === 'CODE_PICKED') {
+        console.log("Received picked code text:", message.payload);
+        setErrantCode(message.payload); // Update errant code state
+        setIsPickingCode(false); // Turn off code picker mode
       }
-      // Note: We previously removed the ERROR_DETECTED handler logic
-      // because automatic detection was unreliable.
     };
     
     // Access chrome via window cast
@@ -63,31 +66,80 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
     setError(null);
     setLoading(false);
     setCopyButtonText('Copy Fixed Code'); 
-    setIsPickingElement(false); // Ensure picker mode is reset
+    setIsPickingElement(false); 
+    setIsPickingCode(false); // Reset code picker mode
     console.log('State reset for new error.');
   };
 
-  // --- Picker Click Handler --- 
+  // --- Helper to check content script readiness via background script ---
+  const checkContentScriptReady = async (tabId: number): Promise<boolean> => {
+    console.log(`MainApp: Checking readiness for tab ${tabId}`);
+    try {
+      const response = await chrome.runtime.sendMessage({ type: 'CHECK_CONTENT_SCRIPT_READY', tabId });
+      console.log(`MainApp: Readiness response for tab ${tabId}:`, response);
+      return response?.ready === true;
+    } catch (error) {
+      console.error(`MainApp: Error checking content script readiness for tab ${tabId}:`, error);
+      return false; // Assume not ready if error occurs
+    }
+  };
+
+  // --- Picker Click Handlers ---
   const handlePickElementClick = async () => {
     setIsPickingElement(true);
     setError(null); 
+    let tabId: number | undefined = undefined;
     try {
-      // Use window cast to access chrome.tabs
-      const chromeTabs = (window as any).chrome?.tabs;
-      if (!chromeTabs) throw new Error("Cannot access chrome.tabs API.");
-      
-      const [activeTab] = await chromeTabs.query({ active: true, currentWindow: true });
-      if (activeTab && activeTab.id) {
-        console.log('Sending START_ELEMENT_PICKING to tab:', activeTab.id);
-        // Use window cast to access chrome.tabs.sendMessage
-        await chromeTabs.sendMessage(activeTab.id, { type: 'START_ELEMENT_PICKING' });
-      } else {
-        throw new Error('Could not find active tab to send message.');
+      const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      tabId = activeTab?.id;
+      if (!tabId) throw new Error('Could not find active tab.');
+
+      // Check readiness *before* sending start message
+      const isReady = await checkContentScriptReady(tabId);
+      if (!isReady) {
+          throw new Error("Content script not ready on the active page. Please reload the page or try again.");
       }
+
+      console.log('Sending START_ELEMENT_PICKING to tab:', tabId);
+      await chrome.tabs.sendMessage(tabId, { type: 'START_ELEMENT_PICKING' });
     } catch (err: any) {
-      console.error("Error sending START_ELEMENT_PICKING message:", err);
+      console.error("Error starting element picker:", err);
       setError(`Failed to start element picker: ${err.message}`);
-      setIsPickingElement(false); 
+      setIsPickingElement(false); // Reset state on error
+    }
+  };
+
+  const handlePickCodeClick = async () => {
+    let tabId: number | undefined = undefined;
+    try {
+        const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        tabId = activeTab?.id;
+        if (!tabId) throw new Error('Could not find active tab.');
+        
+        const isReady = await checkContentScriptReady(tabId);
+        if (!isReady) {
+            throw new Error("Content script not ready on the active page. Please reload the page or try again.");
+        }
+
+        if (isPickingCode) {
+          // Already picking, send capture message (no readiness check needed here)
+          setError(null);
+          console.log('Sending CAPTURE_SELECTION to tab:', tabId);
+          await chrome.tabs.sendMessage(tabId, { type: 'CAPTURE_SELECTION' }); 
+        } else {
+          // Start picking mode
+          setIsPickingCode(true);
+          setError(null); 
+          console.log('Sending START_CODE_PICKING to tab:', tabId);
+          await chrome.tabs.sendMessage(tabId, { type: 'START_CODE_PICKING' });
+        }
+    } catch (err: any) {
+        console.error("Error during code picking process:", err);
+        setError(`Code Picker Error: ${err.message}`);
+        // Reset state only if we failed *before* sending CAPTURE_SELECTION
+        if (!isPickingCode) {
+            setIsPickingCode(false); 
+        }
     }
   };
 
@@ -316,13 +368,24 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
  
         {/* Errant Code Input Area */} 
         <div className="box form-group"> 
-          <label htmlFor="errantCodeInput">Paste Entire Errant Code Here</label> 
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+            <label htmlFor="errantCodeInput" style={{ marginBottom: 0 }}>Paste Entire Errant Code Here</label>
+            <button 
+              id="pickCodeButton"
+              className="button" 
+              onClick={handlePickCodeClick} 
+              disabled={isPickingElement} 
+              style={{ padding: '4px 8px', fontSize: '0.8em'}} 
+            >
+              {isPickingCode ? 'Capture Selection' : 'Pick Code'} 
+            </button>
+          </div>
           <textarea 
             id="errantCodeInput" 
             className="textarea"  
             value={errantCode}  
             onChange={(e) => setErrantCode(e.target.value)}  
-            placeholder="Paste the full code from the file indicated..." 
+            placeholder="Paste the full code from the file indicated or use Pick Code" // Updated placeholder 
             rows={10} 
             disabled={loading} 
           ></textarea> 
