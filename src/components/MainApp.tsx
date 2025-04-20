@@ -26,19 +26,33 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
   const [copyButtonText, setCopyButtonText] = useState('Copy Fixed Code'); // State for button text
   const [activeTab, setActiveTab] = useState('fix'); // Add state for active tab ('fix', 'settings', 'analytics')
   const [fixSavedCounter, setFixSavedCounter] = useState(0); // <-- Add counter state
+  const [isPickingElement, setIsPickingElement] = useState(false); // State for picker mode
 
   // --- Message Listener Effect ---
   useEffect(() => {
-    // Keep the listener simple, only log if needed for future debugging
-    const messageListener = (message: any, sender: chrome.runtime.MessageSender, _sendResponse: (response?: any) => void) => {
-      console.log("MainApp received message (type check removed):", message, "from:", sender);
-      // We removed the automatic state update based on type for now
+    const messageListener = (message: any, sender: any, _sendResponse: (response?: any) => void) => {
+      console.log("MainApp received message:", message, "from:", sender);
+      
+      if (message.type === 'ELEMENT_PICKED') {
+        console.log("Received picked element text:", message.payload);
+        setErrorMessage(message.payload);
+        setIsPickingElement(false); // Turn off picker mode in UI
+      }
+      // Note: We previously removed the ERROR_DETECTED handler logic
+      // because automatic detection was unreliable.
     };
-    chrome.runtime.onMessage.addListener(messageListener);
+    
+    // Access chrome via window cast
+    if ((window as any).chrome?.runtime?.onMessage) {
+        (window as any).chrome.runtime.onMessage.addListener(messageListener);
+    }
     return () => {
-      chrome.runtime.onMessage.removeListener(messageListener);
+      // Access chrome via window cast for removal
+      if ((window as any).chrome?.runtime?.onMessage) {
+          (window as any).chrome.runtime.onMessage.removeListener(messageListener);
+      }
     };
-  }, []);
+  }, []); // Dependencies are correct (empty array)
 
   // --- Reset Handler ---
   const handleReset = () => {
@@ -49,7 +63,32 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
     setError(null);
     setLoading(false);
     setCopyButtonText('Copy Fixed Code'); 
+    setIsPickingElement(false); // Ensure picker mode is reset
     console.log('State reset for new error.');
+  };
+
+  // --- Picker Click Handler --- 
+  const handlePickElementClick = async () => {
+    setIsPickingElement(true);
+    setError(null); 
+    try {
+      // Use window cast to access chrome.tabs
+      const chromeTabs = (window as any).chrome?.tabs;
+      if (!chromeTabs) throw new Error("Cannot access chrome.tabs API.");
+      
+      const [activeTab] = await chromeTabs.query({ active: true, currentWindow: true });
+      if (activeTab && activeTab.id) {
+        console.log('Sending START_ELEMENT_PICKING to tab:', activeTab.id);
+        // Use window cast to access chrome.tabs.sendMessage
+        await chromeTabs.sendMessage(activeTab.id, { type: 'START_ELEMENT_PICKING' });
+      } else {
+        throw new Error('Could not find active tab to send message.');
+      }
+    } catch (err: any) {
+      console.error("Error sending START_ELEMENT_PICKING message:", err);
+      setError(`Failed to start element picker: ${err.message}`);
+      setIsPickingElement(false); 
+    }
   };
 
   // --- Handle Fix Code Logic ---
@@ -252,13 +291,25 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
       <div id="fixTab" className={`tab-content ${activeTab === 'fix' ? 'active' : ''}`}> 
         {/* Error Message Input Area */} 
         <div className="box form-group"> 
-          <label htmlFor="errorMessageInput">Error Message / File Path</label> 
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+            <label htmlFor="errorMessageInput" style={{ marginBottom: 0 }}>Error Message / File Path</label>
+            {/* Add Picker Button */} 
+            <button 
+              id="pickElementButton"
+              className="button" 
+              onClick={handlePickElementClick} 
+              disabled={isPickingElement} 
+              style={{ padding: '4px 8px', fontSize: '0.8em'}} // Smaller button
+            >
+              {isPickingElement ? 'Picking...' : 'Pick Element'} 
+            </button>
+          </div>
           <input 
             id="errorMessageInput" 
-            className="input" // Remove conditional class 
+            className="input" 
             value={errorMessage} 
-            onChange={(e) => setErrorMessage(e.target.value)} // Revert to simple handler
-            placeholder="Paste error message here..." // Simple placeholder
+            onChange={(e) => setErrorMessage(e.target.value)} 
+            placeholder="Paste error message here or use Pick Element" // Updated placeholder
             disabled={loading} 
           /> 
         </div> 
