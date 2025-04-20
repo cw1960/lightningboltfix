@@ -1,0 +1,31 @@
+/* CSS to override Chrome extension header */
+.side-panel-header,
+.chrome-extension-header,
+header,
+.header {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  height: 0 !important;
+  overflow: hidden !important;
+}
+
+/* Override any Chrome extension styles */
+body > *:first-child:not(#splashScreen) {
+  display: none !important;
+}
+
+/* Logo container styles */
+.logo-container {
+  display: flex;
+  justify-content: center;
+  margin-top: 16px;
+  margin-bottom: 16px;
+  position: relative;
+  z-index: 100;
+}
+
+.logo-container img {
+  width: 80px;
+  height: auto;
+}

@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lightning Bolt Fix</title>
+  <style>
+    body {
+      background-color: #0a0a0a;
+      color: #8b8b8b;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+      margin: 0;
+      padding: 16px;
+      width: 100%;
+      height: 100vh;
+      box-sizing: border-box;
+    }
+    h1, h2, h3, h4, h5, h6 {
+      color: #f2fbff;
+    }
+    .container {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      height: 100%;
+    }
+    .box {
+      background-color: #262626;
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .button {
+      background-color: #1488fc;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      padding: 8px 16px;
+      cursor: pointer;
+      font-weight: 500;
+      transition: background-color 0.2s;
+    }
+    .button:hover {
+      background-color: #2ba6ff;
+    }
+    .button:disabled {
+      background-color: #555;
+      cursor: not-allowed;
+    }
+    .input, .textarea {
+      background-color: #0a0a0a;
+      border: 1px solid #262626;
+      border-radius: 4px;
+      padding: 8px;
+      color: #8b8b8b;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    .textarea {
+      min-height: 100px;
+      resize: vertical;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-bottom: 16px;
+      border-bottom: 1px solid #262626;
+    }
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .logo svg {
+      width: 24px;
+      height: 24px;
+      color: #1488fc;
+    }
+    .error {
+      color: #ef4444;
+    }
+    .success {
+      color: #47d47a;
+    }
+    .loading {
+      display: inline-block;
+      width: 20px;
+      height: 20px;
+      border: 2px solid rgba(255,255,255,.3);
+      border-radius: 50%;
+      border-top-color: #1488fc;
+      animation: spin 1s ease-in-out infinite;
+      margin-right: 8px;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    .result-code {
+      background-color: #1a1a1a;
+      border-radius: 4px;
+      padding: 12px;
+      overflow-x: auto;
+      font-family: monospace;
+      white-space: pre;
+      color: #f2fbff;
+    }
+    .tabs {
+      display: flex;
+      border-bottom: 1px solid #262626;
+      margin-bottom: 16px;
+    }
+    .tab {
+      padding: 8px 16px;
+      cursor: pointer;
+      color: #8b8b8b;
+      border-bottom: 2px solid transparent;
+    }
+    .tab.active {
+      color: #1488fc;
+      border-bottom: 2px solid #1488fc;
+    }
+    .tab-content {
+      display: none;
+    }
+    .tab-content.active {
+      display: block;
+    }
+    .api-key-form {
+      margin-bottom: 16px;
+    }
+    .form-group {
+      margin-bottom: 12px;
+    }
+    .form-group label {
+      display: block;
+      margin-bottom: 4px;
+    }
+    .radio-group {
+      display: flex;
+      gap: 16px;
+      margin-top: 8px;
+    }
+    .radio-option {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+    .badge-primary {
+      background-color: #1488fc;
+      color: white;
+    }
+    .badge-success {
+      background-color: #47d47a;
+      color: white;
+    }
+    .badge-warning {
+      background-color: #f59e0b;
+      color: white;
+    }
+    /* Splash screen styles */
+    #splashScreen {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: #0a0a0a;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 9999;
+    }
+    #splashScreen img {
+      max-width: 80%;
+      max-height: 80%;
+    }
+    /* Auth views */
+    #authView, #onboardingView {
+      display: none;
+    }
+    .auth-container {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      padding: 16px;
+    }
+    .auth-header {
+      text-align: center;
+      margin-bottom: 16px;
+    }
+    .auth-footer {
+      text-align: center;
+      margin-top: 16px;
+      font-size: 14px;
+    }
+    .auth-footer a {
+      color: #1488fc;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    /* Onboarding styles */
+    .onboarding-step {
+      display: none;
+    }
+    .onboarding-step.active {
+      display: block;
+    }
+    .step-indicator {
+      display: flex;
+      justify-content: center;
+      gap: 8px;
+      margin-bottom: 24px;
+    }
+    .step-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background-color: #262626;
+    }
+    .step-dot.active {
+      background-color: #1488fc;
+    }
+    .onboarding-buttons {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 24px;
+    }
+    /* Main app view */
+    #mainAppView {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <!-- Splash Screen -->
+  <div id="splashScreen">
+    <img src="https://i.imgur.com/twNKfqN.png" alt="Lightning Bolt Fix Splash Screen">
+  </div>
+
+  <!-- Auth View (Sign In / Sign Up) -->
+  <div id="authView">
+    <div class="auth-container">
+      <div class="auth-header">
+        <div class="logo" style="justify-content: center;">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+          </svg>
+          <h1>Lightning Bolt Fix</h1>
+        </div>
+      </div>
+
+      <div class="box" id="signInForm">
+        <h2>Sign In</h2>
+        <div class="form-group">
+          <label for="signInEmail">Email</label>
+          <input type="email" id="signInEmail" class="input" placeholder="your@email.com">
+        </div>
+        <div class="form-group">
+          <label for="signInPassword">Password</label>
+          <input type="password" id="signInPassword" class="input" placeholder="Your password">
+        </div>
+        <button class="button" id="signInButton" style="width: 100%;">Sign In</button>
+      </div>
+
+      <div class="auth-footer">
+        Don't have an account? <a id="switchToSignUp">Sign Up</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Onboarding View -->
+  <div id="onboardingView">
+    <div class="auth-container">
+      <div class="auth-header">
+        <div class="logo" style="justify-content: center;">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+          </svg>
+          <h1>Lightning Bolt Fix</h1>
+        </div>
+      </div>
+
+      <div class="step-indicator">
+        <div class="step-dot active" data-step="1"></div>
+        <div class="step-dot" data-step="2"></div>
+        <div class="step-dot" data-step="3"></div>
+        <div class="step-dot" data-step="4"></div>
+      </div>
+
+      <!-- Step 1: Welcome / Sign Up -->
+      <div class="onboarding-step active" id="onboardingStep1">
+        <div class="box">
+          <h2>Welcome to Lightning Bolt Fix!</h2>
+          <p>Let's get you set up with an account.</p>
+
+          <div class="form-group">
+            <label for="signUpFirstName">First Name</label>
+            <input type="text" id="signUpFirstName" class="input" placeholder="Your first name">
+          </div>
+          <div class="form-group">
+            <label for="signUpEmail">Email</label>
+            <input type="email" id="signUpEmail" class="input" placeholder="your@email.com">
+          </div>
+          <div class="form-group">
+            <label for="signUpPassword">Password</label>
+            <input type="password" id="signUpPassword" class="input" placeholder="Create a password">
+          </div>
+
+          <div class="onboarding-buttons">
+            <button class="button" id="onboardingStep1Next">Next</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 2: API Key Input -->
+      <div class="onboarding-step" id="onboardingStep2">
+        <div class="box">
+          <h2>Add Your API Keys</h2>
+          <p>To use Lightning Bolt Fix, you'll need <strong>at least one</strong> API key for the LLMs.</p>
+
+          <div class="api-group">
+            <div class="form-group">
+              <label for="onboardingClaudeApiKey">Claude API Key</label>
+              <input type="password" id="onboardingClaudeApiKey" class="input" placeholder="sk-ant-api...">
+            </div>
+          </div>
+
+          <div class="api-group">
+            <div class="form-group">
+              <label for="onboardingGeminiApiKey">Gemini API Key</label>
+              <input type="password" id="onboardingGeminiApiKey" class="input" placeholder="AIzaSy...">
+            </div>
+          </div>
+
+          <div class="api-group">
+            <div class="form-group">
+              <label for="onboardingOtherApiProvider">Other API Provider</label>
+              <input type="text" id="onboardingOtherApiProvider" class="input" placeholder="e.g., OpenAI, Mistral, etc.">
+            </div>
+            <div class="form-group">
+              <label for="onboardingOtherApiKey">Other API Key</label>
+              <input type="password" id="onboardingOtherApiKey" class="input" placeholder="Enter another LLM API key">
+            </div>
+          </div>
+
+          <div class="onboarding-buttons">
+            <button class="button" id="onboardingStep2Back" style="background-color: #262626;">Back</button>
+            <button class="button" id="onboardingStep2Next">Next</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 3: Set Default LLM -->
+      <div class="onboarding-step" id="onboardingStep3">
+        <div class="box">
+          <h2>Choose Default LLM</h2>
+          <p>Select which LLM you want to use by default:</p>
+
+          <div class="radio-group">
+            <div class="radio-option">
+              <input type="radio" id="defaultClaude" name="defaultLLM" value="claude" checked>
+              <label for="defaultClaude">Claude 3.7 Sonnet</label>
+            </div>
+            <div class="radio-option">
+              <input type="radio" id="defaultGemini" name="defaultLLM" value="gemini">
+              <label for="defaultGemini">Gemini 2.5 Pro</label>
+            </div>
+            <div class="radio-option" id="otherLLMOption" style="display: none;">
+              <input type="radio" id="defaultOther" name="defaultLLM" value="other">
+              <label for="defaultOther" id="otherLLMLabel">Other LLM</label>
+            </div>
+          </div>
+
+          <div class="onboarding-buttons">
+            <button class="button" id="onboardingStep3Back" style="background-color: #262626;">Back</button>
+            <button class="button" id="onboardingStep3Next">Next</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 4: Instructions -->
+      <div class="onboarding-step" id="onboardingStep4">
+        <div class="box">
+          <h2>How to Use Lightning Bolt Fix</h2>
+
+          <ol style="padding-left: 20px; line-height: 1.5;">
+            <li>Navigate to a Bolt.new project</li>
+            <li>When you encounter an error, click the Lightning Bolt Fix icon</li>
+            <li>Paste the error message and problematic code</li>
+            <li>Click "Fix Code" to get an AI-powered solution</li>
+            <li>Apply the fix to your code</li>
+          </ol>
+
+          <div class="onboarding-buttons">
+            <button class="button" id="onboardingStep4Back" style="background-color: #262626;">Back</button>
+            <button class="button" id="onboardingStep4Finish">I Got It!</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main App View -->
+  <div id="mainAppView">
+    <div class="container">
+      <div class="header">
+        <div class="logo">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+          </svg>
+          <h1>Lightning Bolt Fix</h1>
+        </div>
+        <div>
+          <span class="badge badge-warning" id="freeTrialBadge">Free Trial: 5/5</span>
+          <button class="button" id="settingsButton">Settings</button>
+        </div>
+      </div>
+
+      <div class="tabs">
+        <div class="tab active" data-tab="fix">Fix Code</div>
+        <div class="tab" data-tab="settings">Settings</div>
+      </div>
+
+      <div id="fixTab" class="tab-content active">
+        <div class="box">
+          <div class="form-group">
+            <label for="errorMessage">Error Message / File Path</label>
+            <input type="text" id="errorMessage" class="input" placeholder="Paste the error message here...">
+          </div>
+          <div class="form-group">
+            <label for="code">Errant Code</label>
+            <textarea id="code" class="textarea" placeholder="Paste the code that's causing the error..."></textarea>
+          </div>
+          <div class="form-group">
+            <label>Select LLM</label>
+            <div class="radio-group">
+              <div class="radio-option">
+                <input type="radio" id="claude" name="llm" value="claude" checked>
+                <label for="claude">Claude 3.7 Sonnet</label>
+              </div>
+              <div class="radio-option">
+                <input type="radio" id="gemini" name="llm" value="gemini">
+                <label for="gemini">Gemini 2.5 Pro</label>
+              </div>
+            </div>
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button class="button" id="captureButton">Capture Screenshot</button>
+            <button class="button" id="fixButton">Fix Code</button>
+          </div>
+        </div>
+
+        <div class="box" id="resultBox" style="display: none;">
+          <h2>Fix Result</h2>
+          <div id="result" style="white-space: pre-wrap;"></div>
+          <button class="button" id="copyButton" style="margin-top: 16px;">Copy Corrected Code</button>
+        </div>
+      </div>
+
+      <div id="settingsTab" class="tab-content">
+        <div class="box">
+          <h2>API Keys</h2>
+          <div class="form-group">
+            <label for="claudeApiKey">Claude API Key</label>
+            <input type="password" id="claudeApiKey" class="input" placeholder="sk-ant-api...">
+          </div>
+          <div class="form-group">
+            <label for="geminiApiKey">Gemini API Key</label>
+            <input type="password" id="geminiApiKey" class="input" placeholder="AIzaSy...">
+          </div>
+          <button class="button" id="saveApiKeys">Save API Keys</button>
+        </div>
+
+        <div class="box">
+          <h2>Account</h2>
+          <p>Signed in as <span id="userEmail">user@example.com</span></p>
+          <button class="button" id="signOutButton" style="background-color: #262626;">Sign Out</button>
+        </div>
+
+        <div class="box">
+          <h2>Subscription</h2>
+          <p>You are currently on the <span class="badge badge-warning">Free Trial</span> plan.</p>
+          <p>You have used <strong>0</strong> of <strong>5</strong> free fixes.</p>
+          <button class="button" id="upgradeButton">Upgrade to Premium</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main React App -->
+  <div id="root"></div>
+  <script type="module" src="/assets/sidepanel.js"></script>
+
+  <!-- Splash Screen Handler -->
+  <script src="splash-handler.js" defer></script>
+</body>
+</html>
