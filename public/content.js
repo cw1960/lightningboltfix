@@ -86,23 +86,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'START_ELEMENT_PICKING') {
     activatePickerMode('element');
     document.addEventListener('click', handleElementClick, { capture: true, once: true }); 
-  } else if (message.type === 'START_CODE_PICKING') {
+    return false; 
+  } else if (message.type === 'ACTIVATE_CODE_PICKER') {
     activatePickerMode('code'); 
-  } else if (message.type === 'CAPTURE_SELECTION') {
-    if (currentPickerType === 'code' && isPickerActive) {
-      const selectedText = window.getSelection()?.toString().trim() || '';
-      console.log("LBF: Captured selection text:", selectedText);
-      chrome.runtime.sendMessage({ type: 'CODE_PICKED', payload: selectedText }, (response) => {
-         if (chrome.runtime.lastError) {
-             console.error(`LBF: Error sending CODE_PICKED message:`, chrome.runtime.lastError.message || chrome.runtime.lastError);
-         } else {
-             console.log(`LBF: CODE_PICKED message sent successfully. Response:`, response);
-         }
-      });
-      deactivatePickerMode();
-    } else {
-      console.warn("LBF: Received CAPTURE_SELECTION but not in code picking mode.");
-    }
+    document.addEventListener('click', handleCodeClick, { capture: true, once: true }); 
+    return false;
   }
   
   return false; 
@@ -128,9 +116,45 @@ const handleElementClick = (event) => {
    
    const clickedElement = event.target;
    const text = clickedElement.textContent?.trim() || ''; 
-   console.log("LBF: Captured text:", text);
+   console.log("LBF: Captured element text (textContent):", text);
    
    const messageType = 'ELEMENT_PICKED'; 
+   
+   chrome.runtime.sendMessage({ type: messageType, payload: text }, (response) => {
+       if (chrome.runtime.lastError) {
+           console.error(`LBF: Error sending ${messageType} message:`, chrome.runtime.lastError.message || chrome.runtime.lastError);
+       } else {
+           console.log(`LBF: ${messageType} message sent successfully. Response:`, response);
+       }
+   });
+
+   deactivatePickerMode(); 
+};
+
+// Click handler specifically for CODE picking
+const handleCodeClick = (event) => {
+   if (!isPickerActive || currentPickerType !== 'code') return; 
+   console.log(`LBF: Click intercepted for [${currentPickerType}]:`, event.target);
+   event.preventDefault();
+   event.stopPropagation();
+   
+   const clickedElement = event.target;
+   // Find the closest parent code content container used by CodeMirror
+   const codeBlockElement = clickedElement.closest('div.cm-content');
+
+   let text = '';
+   if (codeBlockElement) {
+     // Use innerText of the parent block to preserve formatting
+     text = codeBlockElement.innerText?.trim() || ''; 
+     console.log("LBF: Captured code block text (innerText from parent div.cm-content):");
+   } else {
+     // Fallback to the clicked element if no parent block found
+     text = clickedElement.innerText?.trim() || ''; 
+     console.warn("LBF: Could not find parent div.cm-content block. Captured text from clicked element only.");
+   }
+   console.log(text); // Log the captured text
+
+   const messageType = 'CODE_PICKED'; 
    
    chrome.runtime.sendMessage({ type: messageType, payload: text }, (response) => {
        if (chrome.runtime.lastError) {

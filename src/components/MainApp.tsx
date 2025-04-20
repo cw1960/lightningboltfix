@@ -31,18 +31,26 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
 
   // --- Message Listener Effect ---
   useEffect(() => {
-    const messageListener = (message: any, sender: any, _sendResponse: (response?: any) => void) => {
+    const messageListener = (message: any, sender: any, sendResponse: (response?: any) => void) => {
       console.log("MainApp received message:", message, "from:", sender);
-      
+
       if (message.type === 'ELEMENT_PICKED') {
         console.log("Received picked element text:", message.payload);
         setErrorMessage(message.payload);
         setIsPickingElement(false); // Turn off error picker mode
+        sendResponse({ status: "ELEMENT_PICKED received" }); // Acknowledge message
+        return true; // Indicate async response (though we send it immediately)
       } else if (message.type === 'CODE_PICKED') {
         console.log("Received picked code text:", message.payload);
         setErrantCode(message.payload); // Update errant code state
         setIsPickingCode(false); // Turn off code picker mode
+        sendResponse({ status: "CODE_PICKED received" }); // Acknowledge message
+        return true; // Indicate async response (though we send it immediately)
       }
+
+      // If message is not handled, return false or undefined
+      // to avoid keeping the channel open unnecessarily.
+      return false;
     };
     
     // Access chrome via window cast
@@ -87,7 +95,7 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
   // --- Picker Click Handlers ---
   const handlePickElementClick = async () => {
     setIsPickingElement(true);
-    setError(null); 
+    setError(null);
     let tabId: number | undefined = undefined;
     try {
       const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -110,36 +118,29 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
   };
 
   const handlePickCodeClick = async () => {
+    // Always activate picker mode when button is clicked
+    setIsPickingCode(true);
+    setError(null);
     let tabId: number | undefined = undefined;
     try {
         const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
         tabId = activeTab?.id;
         if (!tabId) throw new Error('Could not find active tab.');
-        
+
         const isReady = await checkContentScriptReady(tabId);
         if (!isReady) {
             throw new Error("Content script not ready on the active page. Please reload the page or try again.");
         }
 
-        if (isPickingCode) {
-          // Already picking, send capture message (no readiness check needed here)
-          setError(null);
-          console.log('Sending CAPTURE_SELECTION to tab:', tabId);
-          await chrome.tabs.sendMessage(tabId, { type: 'CAPTURE_SELECTION' }); 
-        } else {
-          // Start picking mode
-          setIsPickingCode(true);
-          setError(null); 
-          console.log('Sending START_CODE_PICKING to tab:', tabId);
-          await chrome.tabs.sendMessage(tabId, { type: 'START_CODE_PICKING' });
-        }
+        // Send message to activate the code picker in the content script
+        console.log('Sending ACTIVATE_CODE_PICKER to tab:', tabId);
+        await chrome.tabs.sendMessage(tabId, { type: 'ACTIVATE_CODE_PICKER' });
+        // Don't set isPickingCode to false here, wait for CODE_PICKED message
+
     } catch (err: any) {
-        console.error("Error during code picking process:", err);
+        console.error("Error activating code picker:", err);
         setError(`Code Picker Error: ${err.message}`);
-        // Reset state only if we failed *before* sending CAPTURE_SELECTION
-        if (!isPickingCode) {
-            setIsPickingCode(false); 
-        }
+        setIsPickingCode(false); // Reset state on error
     }
   };
 
