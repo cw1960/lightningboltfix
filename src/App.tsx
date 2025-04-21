@@ -21,128 +21,139 @@ declare global {
 }
 // --- End Augmentation ---
 
+type AppStatus = 'LOADING' | 'AUTH_REQUIRED' | 'ONBOARDING_REQUIRED' | 'READY' | 'PROFILE_ERROR';
+
 function App() {
   const [session, setSession] = useState<Session | null>(null)
-  const [loading, setLoading] = useState(true) // Represents initial session load
-  const [needsOnboarding, setNeedsOnboarding] = useState(false) 
-  const [profileChecked, setProfileChecked] = useState(false); 
+  const [appStatus, setAppStatus] = useState<AppStatus>('LOADING');
+  const [profileErrorMsg, setProfileErrorMsg] = useState<string | null>(null); // Optional: specific error message
 
-  // Function to check profile and onboarding status - ONLY called when session is KNOWN to exist
-  const checkProfileAndOnboarding = async (currentSession: Session) => {
-    // No need for !currentSession check here
-    setProfileChecked(false); // Reset check status for this run
-    // Consider adding a specific loading indicator for profile check if needed
+  // Function to check profile and determine next status
+  const checkProfileAndSetStatus = async (currentSession: Session) => {
     try {
       console.log("Checking profile for onboarding status...");
-      const { data: profile, error: profileError } = await supabase
+      setAppStatus('LOADING'); // Indicate profile check is happening
+      setProfileErrorMsg(null);
+
+      const { data: profile, error } = await supabase
         .from('profiles')
         .select('onboarding_complete')
         .eq('id', currentSession.user.id)
         .single();
 
-      if (profileError && profileError.code !== 'PGRST116') { 
-          console.error("Error fetching profile:", profileError);
-          setNeedsOnboarding(true); 
-      } else {
-          setNeedsOnboarding(!profile?.onboarding_complete);
-          console.log("Onboarding status:", !profile?.onboarding_complete);
+      if (error && error.code !== 'PGRST116') { // Handle actual errors
+          console.error("Error fetching profile:", error);
+          throw new Error("Failed to fetch user profile."); // Throw to be caught below
       }
-    } catch (error) {
+
+      // If profile exists and onboarding is complete
+      if (profile?.onboarding_complete) {
+          console.log("Onboarding complete, setting status to READY");
+          setAppStatus('READY');
+      } else {
+          // If profile doesn't exist (PGRST116) or onboarding_complete is false
+          console.log("Onboarding required, setting status to ONBOARDING_REQUIRED");
+          setAppStatus('ONBOARDING_REQUIRED');
+      }
+    } catch (error: any) {
       console.error("Error checking profile:", error);
-      setNeedsOnboarding(true); 
-    } finally {
-      setProfileChecked(true); // Mark as checked for this session
-      // We don't manage the main 'loading' state here anymore
+      setProfileErrorMsg(error.message || "An error occurred while checking profile.");
+      setAppStatus('PROFILE_ERROR'); // Set a specific error status
     }
   };
 
-  // Callback function to be passed to OnboardingFlow
+  // Callback for OnboardingFlow to signal completion
   const handleOnboardingComplete = () => {
-    console.log("Onboarding complete signal received by App.tsx. Re-checking profile.");
-    if (session) {
-      // Reset profileChecked to ensure the effect runs
-      setProfileChecked(false);
-      // Explicitly trigger the profile check again now that onboarding is done
-      checkProfileAndOnboarding(session);
-    } else {
-      console.warn("Onboarding completed but session is unexpectedly null.");
-    }
+    console.log("Onboarding complete signal received. Setting status to READY.");
+    // Directly set status to READY, assuming profile was just updated
+    setAppStatus('READY'); 
   };
 
-  // --- Initial Auth Check and Listener Setup --- 
+  // --- Auth Setup Effect --- 
   useEffect(() => {
-    setLoading(true); // Start loading for initial session check
+    setAppStatus('LOADING'); // Initial status
     
-    // Initial check
+    // Initial session check
     supabase.auth.getSession().then(({ data: { session: initialSession } }) => {
       console.log("Initial session fetched:", initialSession);
       setSession(initialSession);
-      setLoading(false); // <--- Stop initial loading HERE
+      if (!initialSession) {
+        setAppStatus('AUTH_REQUIRED');
+      } 
+      // If session exists, the effect below will trigger the profile check
     }).catch(err => {
       console.error("Error getting initial session:", err);
       setSession(null);
-      setLoading(false); // <--- Stop initial loading HERE on error too
+      setAppStatus('AUTH_REQUIRED'); // Go to auth on error
     });
 
-    // Listen for auth state changes
+    // Auth state change listener
     const { data: authListener } = supabase.auth.onAuthStateChange(
       (_event, newSession) => {
         console.log("Auth state changed event:", _event, newSession);
+        const sessionChanged = newSession?.access_token !== session?.access_token;
         setSession(newSession);
-        setProfileChecked(false); // Reset profile check needed status
-        // DO NOT set loading = true here
+        if (!newSession) {
+            setAppStatus('AUTH_REQUIRED');
+        } else if (sessionChanged) {
+             // If session changed (e.g. login/logout), trigger profile check
+            // The effect below handles this based on session change
+            setAppStatus('LOADING'); // Reset to loading before profile check
+        } 
+        // If only profile data changed (handled by onOnboardingComplete), session remains same, no status change here
       }
     );
 
-    // Cleanup function
     return () => {
       authListener?.subscription.unsubscribe();
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Run only once on mount
 
   // --- Effect to Check Profile based on Session --- 
   useEffect(() => {
-    console.log("Session effect triggered. Session:", session);
-    if (session) {
-      // If we have a session, check the profile
-      checkProfileAndOnboarding(session);
-    } else {
-      // If session is null, onboarding isn't needed, profile is considered 'checked' (as there's nothing to check)
-      setNeedsOnboarding(false);
-      setProfileChecked(true);
+    console.log("Session effect triggered. Session:", session, "Status:", appStatus);
+    if (session && appStatus === 'LOADING') {
+      // Only check profile if we have a session AND we are in a loading state 
+      // (implies we just got the session or auth state changed)
+      checkProfileAndSetStatus(session);
+    } else if (!session && appStatus !== 'AUTH_REQUIRED') {
+        // If session becomes null unexpectedly, force Auth screen
+        setAppStatus('AUTH_REQUIRED');
     }
-  }, [session]); // Re-run only when session object itself changes
+  // We only want this effect to run when the session object *reference* changes OR if appStatus becomes LOADING
+  // eslint-disable-next-line react-hooks/exhaustive-deps 
+  }, [session, appStatus]); 
 
 
   // --- Render Logic --- 
-  if (loading) {
-    // Only show splash/null during the VERY initial session check
-    return null; 
+  const renderContent = () => {
+      console.log("Rendering based on status:", appStatus);
+      switch (appStatus) {
+          case 'LOADING':
+              return null; // Splash handles initial load
+          case 'AUTH_REQUIRED':
+              return <AuthFlow />;
+          case 'ONBOARDING_REQUIRED':
+              return <OnboardingFlow session={session!} onOnboardingComplete={handleOnboardingComplete} />;
+          case 'READY':
+              return <MainApp session={session!} />;
+          case 'PROFILE_ERROR':
+              // Simple error display, could be enhanced
+              return <div className="box error">Error: {profileErrorMsg || "Could not load profile."} Please try reloading the extension.</div>;
+          default:
+              console.error("Unhandled app status:", appStatus);
+              return <div>An unexpected error occurred.</div>;
+      }
   }
-
-  if (!session) {
-    console.log("Rendering AuthFlow");
-    return <AuthFlow />; 
-  }
-
-  // Session exists, but we might still be checking the profile
-  if (!profileChecked) {
-      // Show loading or null while profile check is in progress after login/auth change
-      console.log("Waiting for profile check...");
-      // Optionally return a loading indicator specific to profile check
-      return null; 
-  }
-
-  // Session exists, check onboarding status
-  if (needsOnboarding) {
-    console.log("Rendering OnboardingFlow");
-    // Pass the callback function as a prop
-    return <OnboardingFlow session={session} onOnboardingComplete={handleOnboardingComplete} />;
-  }
-
-  // Session exists, profile checked, and onboarding is complete
-  console.log("Rendering MainApp");
-  return <MainApp session={session} />;
+  
+  // Use a key on the outer div tied to appStatus to help React differentiate states?
+  // Might not be necessary but can help in complex transitions.
+  return (
+      <div key={appStatus}>
+          {renderContent()}
+      </div>
+  );
 
 }
 
