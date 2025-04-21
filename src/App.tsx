@@ -23,107 +23,126 @@ declare global {
 
 function App() {
   const [session, setSession] = useState<Session | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [needsOnboarding, setNeedsOnboarding] = useState(false) // Placeholder state
+  const [loading, setLoading] = useState(true) // Represents initial session load
+  const [needsOnboarding, setNeedsOnboarding] = useState(false) 
+  const [profileChecked, setProfileChecked] = useState(false); 
 
-  // Function to check authentication status
-  const checkAuth = async () => {
-    setLoading(true)
+  // Function to check profile and onboarding status - ONLY called when session is KNOWN to exist
+  const checkProfileAndOnboarding = async (currentSession: Session) => {
+    // No need for !currentSession check here
+    setProfileChecked(false); // Reset check status for this run
+    // Consider adding a specific loading indicator for profile check if needed
     try {
-      const { data: { session }, error } = await supabase.auth.getSession()
-      if (error) throw error
-      setSession(session)
+      console.log("Checking profile for onboarding status...");
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('onboarding_complete')
+        .eq('id', currentSession.user.id)
+        .single();
 
-      if (session) {
-        // TODO: Check if user needs onboarding (e.g., fetch profile)
-        // For now, assume they need onboarding if logged in
-        // Replace this logic later
-        const { data: profile, error: profileError } = await supabase
-          .from('profiles') // Assuming a 'profiles' table
-          .select('onboarding_complete')
-          .eq('id', session.user.id)
-          .single()
-
-        if (profileError && profileError.code !== 'PGRST116') { // PGRST116 = row not found
-            console.error("Error fetching profile:", profileError);
-            // Decide how to handle profile fetch error - maybe default to onboarding?
-            setNeedsOnboarding(true);
-        } else {
-            setNeedsOnboarding(!profile?.onboarding_complete);
-        }
-
+      if (profileError && profileError.code !== 'PGRST116') { 
+          console.error("Error fetching profile:", profileError);
+          setNeedsOnboarding(true); 
       } else {
-        setNeedsOnboarding(false); // Not logged in, doesn't need onboarding flow yet
+          setNeedsOnboarding(!profile?.onboarding_complete);
+          console.log("Onboarding status:", !profile?.onboarding_complete);
       }
-
     } catch (error) {
-      console.error("Error in checkAuth:", error)
-      setSession(null) // Ensure session is null on error
-      setNeedsOnboarding(false);
+      console.error("Error checking profile:", error);
+      setNeedsOnboarding(true); 
     } finally {
-      setLoading(false)
+      setProfileChecked(true); // Mark as checked for this session
+      // We don't manage the main 'loading' state here anymore
     }
-  }
+  };
 
+  // Callback function to be passed to OnboardingFlow
+  const handleOnboardingComplete = () => {
+    console.log("Onboarding complete signal received by App.tsx. Re-checking profile.");
+    if (session) {
+      // Reset profileChecked to ensure the effect runs
+      setProfileChecked(false);
+      // Explicitly trigger the profile check again now that onboarding is done
+      checkProfileAndOnboarding(session);
+    } else {
+      console.warn("Onboarding completed but session is unexpectedly null.");
+    }
+  };
+
+  // --- Initial Auth Check and Listener Setup --- 
   useEffect(() => {
-    // Expose checkAuth globally for splash-handler.js
-    window.checkAuthState = checkAuth;
-
-    // Run initial check
-    checkAuth()
+    setLoading(true); // Start loading for initial session check
+    
+    // Initial check
+    supabase.auth.getSession().then(({ data: { session: initialSession } }) => {
+      console.log("Initial session fetched:", initialSession);
+      setSession(initialSession);
+      setLoading(false); // <--- Stop initial loading HERE
+    }).catch(err => {
+      console.error("Error getting initial session:", err);
+      setSession(null);
+      setLoading(false); // <--- Stop initial loading HERE on error too
+    });
 
     // Listen for auth state changes
     const { data: authListener } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
-        console.log("Auth state changed:", _event, session);
-        setSession(session)
-        setLoading(false) // Stop loading once we get an auth event
-
-        // Re-check onboarding status when auth state changes
-        if (session) {
-           const checkOnboarding = async () => {
-                const { data: profile, error: profileError } = await supabase
-                  .from('profiles')
-                  .select('onboarding_complete')
-                  .eq('id', session.user.id)
-                  .single();
-
-                if (profileError && profileError.code !== 'PGRST116') {
-                    console.error("Error fetching profile on auth change:", profileError);
-                    setNeedsOnboarding(true); // Default to onboarding on error?
-                } else {
-                    setNeedsOnboarding(!profile?.onboarding_complete);
-                }
-           }
-           checkOnboarding();
-        } else {
-            setNeedsOnboarding(false);
-        }
+      (_event, newSession) => {
+        console.log("Auth state changed event:", _event, newSession);
+        setSession(newSession);
+        setProfileChecked(false); // Reset profile check needed status
+        // DO NOT set loading = true here
       }
-    )
+    );
 
     // Cleanup function
     return () => {
-      authListener?.subscription.unsubscribe()
-      delete window.checkAuthState; // Clean up global function
-    }
-  }, []) // Run only once on mount
+      authListener?.subscription.unsubscribe();
+    };
+  }, []); // Run only once on mount
 
-  // Render based on loading and session state
+  // --- Effect to Check Profile based on Session --- 
+  useEffect(() => {
+    console.log("Session effect triggered. Session:", session);
+    if (session) {
+      // If we have a session, check the profile
+      checkProfileAndOnboarding(session);
+    } else {
+      // If session is null, onboarding isn't needed, profile is considered 'checked' (as there's nothing to check)
+      setNeedsOnboarding(false);
+      setProfileChecked(true);
+    }
+  }, [session]); // Re-run only when session object itself changes
+
+
+  // --- Render Logic --- 
   if (loading) {
-    return null // Splash screen handles initial view
+    // Only show splash/null during the VERY initial session check
+    return null; 
   }
 
   if (!session) {
-    return <AuthFlow />
+    console.log("Rendering AuthFlow");
+    return <AuthFlow />; 
   }
 
+  // Session exists, but we might still be checking the profile
+  if (!profileChecked) {
+      // Show loading or null while profile check is in progress after login/auth change
+      console.log("Waiting for profile check...");
+      // Optionally return a loading indicator specific to profile check
+      return null; 
+  }
+
+  // Session exists, check onboarding status
   if (needsOnboarding) {
-    return <OnboardingFlow session={session} />
+    console.log("Rendering OnboardingFlow");
+    // Pass the callback function as a prop
+    return <OnboardingFlow session={session} onOnboardingComplete={handleOnboardingComplete} />;
   }
 
-  // Use the imported component
-  return <MainApp session={session} />
+  // Session exists, profile checked, and onboarding is complete
+  console.log("Rendering MainApp");
+  return <MainApp session={session} />;
 
 }
 

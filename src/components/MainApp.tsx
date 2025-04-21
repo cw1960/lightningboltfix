@@ -8,6 +8,8 @@ import AnalyticsTab from './AnalyticsTab'; // Import AnalyticsTab
 interface ProfileData {
     claude_api_key: string | null;
     gemini_api_key: string | null;
+    user_selected_modal_name: string | null;
+    user_selected_modal_api: string | null;
     default_llm: string | null;
 }
 
@@ -120,10 +122,10 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
     let llmProvider = ''; // Keep track for saving later
 
     try {
-      // 1. Fetch user profile data
+      // 1. Fetch user profile data (include new fields)
       const { data: profile, error: profileError } = await supabase
         .from('profiles')
-        .select('claude_api_key, gemini_api_key, default_llm')
+        .select('claude_api_key, gemini_api_key, user_selected_modal_name, user_selected_modal_api, default_llm') // Added custom fields
         .eq('id', session.user.id)
         .single<ProfileData>();
 
@@ -132,11 +134,13 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
 
       // 2. Determine LLM and API details
       const llmToUse = profile.default_llm;
-      llmProvider = llmToUse ?? ''; // Store the provider name
+      // Use custom model name for provider if 'custom' is selected
+      llmProvider = llmToUse === 'custom' ? (profile.user_selected_modal_name || 'Custom') : (llmToUse ?? '');
       let apiKey: string | null = null;
       let apiUrl: string = '';
       let requestBody: any = {};
       let headers: HeadersInit = { 'Content-Type': 'application/json' };
+      let isCustomModel = false;
 
       // Construct the shared prompt content
       const promptContent = `Error Message: ${errorMessage}\n\nErrant Code:\n\`\`\`\n${errantCode}\n\`\`\`\n\nFix the errant code. Provide your response in two parts: First, an explanation of the error and the fix. Second, the complete fixed code block enclosed in \`\`\`language\n...\n\`\`\` markers.`;
@@ -154,66 +158,77 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
         };
       } else if (llmToUse === 'gemini' && profile.gemini_api_key) {
         apiKey = profile.gemini_api_key;
-        // Note: Key should be passed securely, but following previous plan for V1
         apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-latest:generateContent?key=${apiKey}`;
         requestBody = {
           contents: [{ parts: [{ text: promptContent }] }]
         };
-        // No extra headers needed for Gemini REST API with key in URL
+      } else if (llmToUse === 'custom' && profile.user_selected_modal_name && profile.user_selected_modal_api) {
+         // Custom model selected - Prepare for informative error, no API call
+         isCustomModel = true;
+         apiKey = profile.user_selected_modal_api; // Store key maybe useful later
+         console.log(`Custom model selected: ${profile.user_selected_modal_name}. API calls not implemented.`);
       } else {
+        // Handle cases where default is set but key is missing or default is null
         throw new Error('Default LLM not set, API key missing, or provider not supported.');
       }
 
-      // 3. Make the API call
-      console.log(`Calling ${llmToUse} API`);
-      const response = await fetch(apiUrl, {
-        method: 'POST',
-        headers: headers,
-        body: JSON.stringify(requestBody),
-      });
-
-      if (!response.ok) {
-        const errorBody = await response.text();
-        throw new Error(`API request failed: ${response.status} ${response.statusText} - ${errorBody}`);
-      }
-
-      const result = await response.json();
-      console.log(`${llmToUse} API Result:`, result);
-
-      // 4. Parse the LLM response
+      // 3. Make the API call *unless* it's an unimplemented custom model
       let explanationText = 'Could not parse explanation.';
       let fixedCodeBlock = 'Could not parse fixed code.';
 
-      try { // Add try-catch for parsing, as LLM output can vary
-          if (llmToUse === 'claude' && result.content?.[0]?.text) {
-            const rawText = result.content[0].text;
-            const codeBlockMatch = rawText.match(/```(?:[a-zA-Z]*\n)?([\s\S]*?)```/);
-            if (codeBlockMatch?.[1]) {
-              fixedCodeBlock = codeBlockMatch[1].trim();
-              explanationText = rawText.substring(0, codeBlockMatch.index ?? 0).trim();
-            } else {
-              explanationText = rawText; // Assume whole response is explanation
-            }
-          } else if (llmToUse === 'gemini' && result.candidates?.[0]?.content?.parts?.[0]?.text) {
-            const rawText = result.candidates[0].content.parts[0].text;
-            const codeBlockMatch = rawText.match(/```(?:[a-zA-Z]*\n)?([\s\S]*?)```/);
-            if (codeBlockMatch?.[1]) {
-              fixedCodeBlock = codeBlockMatch[1].trim();
-              explanationText = rawText.substring(0, codeBlockMatch.index ?? 0).trim();
-            } else {
-              explanationText = rawText; // Assume whole response is explanation
-            }
+      if (isCustomModel) {
+          // Set specific error for custom models
+          throw new Error(`Fixes for custom model '${llmProvider}' are not yet implemented.`);
+      } else {
+          // Proceed with the API call for Claude or Gemini
+          console.log(`Calling ${llmToUse} API`);
+          const response = await fetch(apiUrl, {
+            method: 'POST',
+            headers: headers,
+            body: JSON.stringify(requestBody),
+          });
+
+          if (!response.ok) {
+            const errorBody = await response.text();
+            throw new Error(`API request failed: ${response.status} ${response.statusText} - ${errorBody}`);
           }
-      } catch (parseError: any) {
-          console.error("Error parsing LLM response:", parseError);
-          setError(`Failed to parse LLM response: ${parseError.message}`);
-          // Keep the default placeholder messages for explanation/code
+
+          const result = await response.json();
+          console.log(`${llmToUse} API Result:`, result);
+
+          // 4. Parse the LLM response
+          try { // Add try-catch for parsing, as LLM output can vary
+              if (llmToUse === 'claude' && result.content?.[0]?.text) {
+                const rawText = result.content[0].text;
+                const codeBlockMatch = rawText.match(/```(?:[a-zA-Z]*\n)?([\s\S]*?)```/);
+                if (codeBlockMatch?.[1]) {
+                  fixedCodeBlock = codeBlockMatch[1].trim();
+                  explanationText = rawText.substring(0, codeBlockMatch.index ?? 0).trim();
+                } else {
+                  explanationText = rawText; // Assume whole response is explanation
+                }
+              } else if (llmToUse === 'gemini' && result.candidates?.[0]?.content?.parts?.[0]?.text) {
+                const rawText = result.candidates[0].content.parts[0].text;
+                const codeBlockMatch = rawText.match(/```(?:[a-zA-Z]*\n)?([\s\S]*?)```/);
+                if (codeBlockMatch?.[1]) {
+                  fixedCodeBlock = codeBlockMatch[1].trim();
+                  explanationText = rawText.substring(0, codeBlockMatch.index ?? 0).trim();
+                } else {
+                  explanationText = rawText; // Assume whole response is explanation
+                }
+              }
+          } catch (parseError: any) {
+              console.error("Error parsing LLM response:", parseError);
+              setError(`Failed to parse LLM response: ${parseError.message}`);
+              // Keep the default placeholder messages for explanation/code
+          }
       }
 
+      // Set state only if not a custom model (as it would have thrown error)
       setExplanation(explanationText);
       setFixedCode(fixedCodeBlock);
 
-      // 5. Save fix details (Step 12)
+      // 5. Save fix details (Skip if custom model error occurred before this point)
        try {
             const { error: insertError } = await supabase.from('fixes').insert({
                 user_id: session.user.id,
@@ -221,7 +236,7 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
                 errant_code: errantCode, // Store original code
                 fixed_code: fixedCodeBlock,
                 llm_explanation: explanationText,
-                llm_provider: llmProvider,
+                llm_provider: llmProvider, // Now correctly uses custom name if set
                 // file_path: null // Add later if file path parsing implemented
             });
             if (insertError) {
