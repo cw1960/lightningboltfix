@@ -87,11 +87,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     activatePickerMode('element');
     document.addEventListener('click', handleElementClick, { capture: true, once: true }); 
     return false; 
-  } else if (message.type === 'ACTIVATE_CODE_PICKER') {
-    activatePickerMode('code'); 
-    document.addEventListener('click', handleCodeClick, { capture: true, once: true }); 
-    return false;
-  }
+  } 
   
   return false; 
 });
@@ -131,43 +127,6 @@ const handleElementClick = (event) => {
    deactivatePickerMode(); 
 };
 
-// Click handler specifically for CODE picking
-const handleCodeClick = (event) => {
-   if (!isPickerActive || currentPickerType !== 'code') return; 
-   console.log(`LBF: Click intercepted for [${currentPickerType}]:`, event.target);
-   event.preventDefault();
-   event.stopPropagation();
-   
-   const clickedElement = event.target;
-   // Find the closest parent code content container used by CodeMirror
-   const codeBlockElement = clickedElement.closest('div.cm-content');
-
-   let text = '';
-   if (codeBlockElement) {
-     // Use innerText of the parent block to preserve formatting
-     text = codeBlockElement.innerText?.trim() || ''; 
-     console.log("LBF: Captured code block text (innerText from parent div.cm-content):");
-   } else {
-     // Fallback to the clicked element if no parent block found
-     text = clickedElement.innerText?.trim() || ''; 
-     console.warn("LBF: Could not find parent div.cm-content block. Captured text from clicked element only.");
-   }
-   console.log(text); // Log the captured text
-
-   const messageType = 'CODE_PICKED'; 
-   
-   chrome.runtime.sendMessage({ type: messageType, payload: text }, (response) => {
-       if (chrome.runtime.lastError) {
-           console.error(`LBF: Error sending ${messageType} message:`, chrome.runtime.lastError.message || chrome.runtime.lastError);
-       } else {
-           console.log(`LBF: ${messageType} message sent successfully. Response:`, response);
-       }
-   });
-
-   deactivatePickerMode(); 
-};
-
-
 // --- Mutation Observer (for potential future automatic error detection) ---
 
 // NOTE: This observer is currently configured to look for conversational 
@@ -178,8 +137,8 @@ function checkForProblemDetection(node) {
   // Check if the node itself is the target h4
   if (node.matches && node.matches('h4') && node.textContent?.includes('Potential problems detected.')) {
     console.log("LBF: (Observer) 'Potential problems detected.' found directly in node:", node);
-    return true; 
-  }
+  return true;
+}
 
   // Check if any descendant is the target h4
   if (node.querySelector) {

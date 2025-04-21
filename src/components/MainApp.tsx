@@ -27,7 +27,6 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
   const [activeTab, setActiveTab] = useState('fix'); // Add state for active tab ('fix', 'settings', 'analytics')
   const [fixSavedCounter, setFixSavedCounter] = useState(0); // <-- Add counter state
   const [isPickingElement, setIsPickingElement] = useState(false); // State for error picker mode
-  const [isPickingCode, setIsPickingCode] = useState(false); // State for code picker mode
 
   // --- Message Listener Effect ---
   useEffect(() => {
@@ -39,12 +38,6 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
         setErrorMessage(message.payload);
         setIsPickingElement(false); // Turn off error picker mode
         sendResponse({ status: "ELEMENT_PICKED received" }); // Acknowledge message
-        return true; // Indicate async response (though we send it immediately)
-      } else if (message.type === 'CODE_PICKED') {
-        console.log("Received picked code text:", message.payload);
-        setErrantCode(message.payload); // Update errant code state
-        setIsPickingCode(false); // Turn off code picker mode
-        sendResponse({ status: "CODE_PICKED received" }); // Acknowledge message
         return true; // Indicate async response (though we send it immediately)
       }
 
@@ -75,7 +68,6 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
     setLoading(false);
     setCopyButtonText('Copy Fixed Code'); 
     setIsPickingElement(false); 
-    setIsPickingCode(false); // Reset code picker mode
     console.log('State reset for new error.');
   };
 
@@ -114,33 +106,6 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
       console.error("Error starting element picker:", err);
       setError(`Failed to start element picker: ${err.message}`);
       setIsPickingElement(false); // Reset state on error
-    }
-  };
-
-  const handlePickCodeClick = async () => {
-    // Always activate picker mode when button is clicked
-    setIsPickingCode(true);
-    setError(null);
-    let tabId: number | undefined = undefined;
-    try {
-        const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        tabId = activeTab?.id;
-        if (!tabId) throw new Error('Could not find active tab.');
-
-        const isReady = await checkContentScriptReady(tabId);
-        if (!isReady) {
-            throw new Error("Content script not ready on the active page. Please reload the page or try again.");
-        }
-
-        // Send message to activate the code picker in the content script
-        console.log('Sending ACTIVATE_CODE_PICKER to tab:', tabId);
-        await chrome.tabs.sendMessage(tabId, { type: 'ACTIVATE_CODE_PICKER' });
-        // Don't set isPickingCode to false here, wait for CODE_PICKED message
-
-    } catch (err: any) {
-        console.error("Error activating code picker:", err);
-        setError(`Code Picker Error: ${err.message}`);
-        setIsPickingCode(false); // Reset state on error
     }
   };
 
@@ -371,24 +336,15 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
         <div className="box form-group"> 
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
             <label htmlFor="errantCodeInput" style={{ marginBottom: 0 }}>Paste Entire Errant Code Here</label>
-            <button 
-              id="pickCodeButton"
-              className="button" 
-              onClick={handlePickCodeClick} 
-              disabled={isPickingElement} 
-              style={{ padding: '4px 8px', fontSize: '0.8em'}} 
-            >
-              {isPickingCode ? 'Capture Selection' : 'Pick Code'} 
-            </button>
           </div>
           <textarea 
             id="errantCodeInput" 
             className="textarea"  
             value={errantCode}  
             onChange={(e) => setErrantCode(e.target.value)}  
-            placeholder="Paste the full code from the file indicated or use Pick Code" // Updated placeholder 
+            placeholder="Manually copy the full code from the file and paste it here." // Updated placeholder 
             rows={10} 
-            disabled={loading} 
+            disabled={loading} // No longer disabled by isPickingCode
           ></textarea> 
         </div> 
  
