@@ -1,18 +1,36 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../supabaseClient';
 import type { Session } from '@supabase/supabase-js';
+import ExtPay from 'extpay'; // Import ExtPay
+
+// Import or define the LlmConfiguration interface (make sure it matches MainApp)
+interface LlmConfiguration {
+    id: string;
+    profile_id: string;
+    provider_type: 'Anthropic' | 'Google' | 'OpenAI' | 'Azure OpenAI' | 'Custom';
+    model_name: string;
+    api_key: string;
+    api_endpoint: string | null;
+    is_default: boolean;
+    created_at: string;
+}
+
+// Define allowed provider types (duplicate from Onboarding, consider sharing later)
+type ProviderType = LlmConfiguration['provider_type'];
+const providerTypes: ProviderType[] = ['Anthropic', 'Google', 'OpenAI', 'Azure OpenAI', 'Custom'];
+
+// Initialize ExtPay - Use your Extension ID
+const extpay = ExtPay('lightning-bolt-fix');
 
 interface SettingsTabProps {
   session: Session;
 }
 
-// Define profile structure explicitly for clarity
-interface ProfileSettings {
-    claude_api_key: string | null;
-    gemini_api_key: string | null;
-    user_selected_modal_name: string | null; // <-- Typo in user prompt? Assuming 'model' not 'modal'
-    user_selected_modal_api: string | null; // <-- Typo in user prompt? Assuming 'model' not 'modal'
-    default_llm: string | null;
+// Define ExtPay user structure (simplified based on docs)
+interface ExtPayUser {
+    paid: boolean;
+    email: string | null;
+    // Add other fields if needed (trialStartedAt, etc.)
 }
 
 const SettingsTab: React.FC<SettingsTabProps> = ({ session }) => {
@@ -20,114 +38,297 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ session }) => {
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  // State for settings fields
-  const [claudeApiKey, setClaudeApiKey] = useState('');
-  const [geminiApiKey, setGeminiApiKey] = useState('');
-  const [customModelName, setCustomModelName] = useState(''); // <-- New state
-  const [customModelApiKey, setCustomModelApiKey] = useState(''); // <-- New state
-  const [defaultLLM, setDefaultLLM] = useState<string | null>(null);
+  // State for LLM configurations
+  const [configurations, setConfigurations] = useState<LlmConfiguration[]>([]);
+  
+  // State for ExtPay status
+  const [extPayUser, setExtPayUser] = useState<ExtPayUser | null>(null);
+  
+  // State for managing the Add/Edit form/modal
+  const [showForm, setShowForm] = useState(false);
+  const [editingConfig, setEditingConfig] = useState<LlmConfiguration | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  
+  // State specifically for the form inputs
+  const [formModelName, setFormModelName] = useState('');
+  const [formProviderType, setFormProviderType] = useState<ProviderType>('Anthropic');
+  const [formApiKey, setFormApiKey] = useState('');
+  const [formApiEndpoint, setFormApiEndpoint] = useState('');
+  const [formIsSaving, setFormIsSaving] = useState(false); // Loading state for form save
 
-  // Fetch current settings on mount
-  useEffect(() => {
-    const fetchProfile = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const { data, error: fetchError } = await supabase
-          .from('profiles')
-          // Select all relevant fields
-          .select('claude_api_key, gemini_api_key, user_selected_modal_name, user_selected_modal_api, default_llm')
-          .eq('id', session.user.id)
-          .single<ProfileSettings>(); // Use interface type
+  const MAX_CONFIGURATIONS = 5;
 
-        if (fetchError) throw fetchError;
-
-        if (data) {
-          setClaudeApiKey(data.claude_api_key || '');
-          setGeminiApiKey(data.gemini_api_key || '');
-          setCustomModelName(data.user_selected_modal_name || ''); // <-- Set state
-          setCustomModelApiKey(data.user_selected_modal_api || ''); // <-- Set state
-          setDefaultLLM(data.default_llm || null);
-        }
-      } catch (err: any) {
-        console.error('Error fetching profile settings:', err);
-        setError('Failed to load settings.');
-      } finally {
-        setLoading(false);
+  // --- Sign Out Handler ---
+  const handleSignOut = async () => {
+    setError(null); // Clear previous errors
+    setLoading(true); // Indicate activity
+    try {
+      const { error: signOutError } = await supabase.auth.signOut();
+      if (signOutError) {
+        throw signOutError;
       }
-    };
-    fetchProfile();
-  }, [session.user.id]);
+      // No need to set state here, App.tsx listener will handle it
+      console.log("User signed out successfully.");
+    } catch (err: any) {
+      console.error('Sign out error:', err);
+      setError(err.message || 'Failed to sign out.');
+      setLoading(false); // Reset loading state on error
+    }
+    // setLoading(false) is not needed on success because the component will unmount/change
+  };
 
-  // Handle saving settings
-  const handleSaveSettings = async () => {
+  // Fetch LLM configurations and ExtPay status
+  const fetchData = useCallback(async () => {
     setLoading(true);
+    setError(null);
+    try {
+      // Fetch LLM Configurations
+      const { data: configData, error: configError } = await supabase
+        .from('llm_user_configurations')
+        .select('*')
+        .eq('profile_id', session.user.id)
+        .order('created_at', { ascending: true }); // Order consistently
+
+      if (configError) throw new Error(`Failed to load LLM configurations: ${configError.message}`);
+      setConfigurations(configData || []);
+
+      // Fetch ExtPay User Status
+      try {
+          const user = await extpay.getUser();
+          console.log("ExtPay User:", user);
+          setExtPayUser(user);
+      } catch (extPayError: any) {
+          console.error("Error fetching ExtPay user:", extPayError);
+          setError("Could not retrieve payment status. Please try again later.");
+          setExtPayUser({ paid: false, email: null }); // Assume unpaid on error
+      }
+
+    } catch (err: any) {
+      console.error('Error fetching settings data:', err);
+      setError(err.message || 'Failed to load settings data.');
+      setConfigurations([]); // Ensure empty array on error
+    } finally {
+      setLoading(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session.user.id]); // Depend only on user ID
+
+  // Fetch data on component mount
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  // --- Open Form Handlers ---
+  const handleAddClick = () => {
+    if (configurations.length >= MAX_CONFIGURATIONS) {
+        setError(`You can add a maximum of ${MAX_CONFIGURATIONS} configurations.`);
+        return;
+    }
+    setEditingConfig(null); // Add mode
+    // Reset form fields for adding
+    setFormModelName('');
+    setFormProviderType('Anthropic'); 
+    setFormApiKey('');
+    setFormApiEndpoint('');
+    setShowForm(true);
+    setFormError(null);
+    setError(null); // Clear main error
+  };
+
+  const handleEditClick = (config: LlmConfiguration) => {
+    setEditingConfig(config); // Edit mode
+    // Pre-fill form fields for editing
+    setFormModelName(config.model_name);
+    setFormProviderType(config.provider_type);
+    setFormApiKey(config.api_key); // Be cautious about displaying/re-saving keys
+    setFormApiEndpoint(config.api_endpoint || '');
+    setShowForm(true);
+    setFormError(null);
+    setError(null); // Clear main error
+  };
+
+  // --- Form Save/Update/Close Logic ---
+  const handleSaveForm = async () => {
+    setFormIsSaving(true);
+    setFormError(null);
     setError(null);
     setSuccessMessage(null);
 
-    // --- Validation --- 
-    const hasClaudeKey = !!claudeApiKey;
-    const hasGeminiKey = !!geminiApiKey;
-    const hasCustomDetails = !!(customModelName && customModelApiKey);
+    const isEndpointNowRequired = formProviderType === 'Azure OpenAI' || formProviderType === 'Custom';
 
-    // Check if any LLM option is available
-    const canSelectDefault = hasClaudeKey || hasGeminiKey || hasCustomDetails;
-
-    // Ensure a default LLM is chosen if at least one option is configured
-    if (canSelectDefault && !defaultLLM) {
-        setError('Please select a default LLM from the available options.');
-        setLoading(false);
+    // --- Validation ---
+    if (!formModelName.trim()) {
+        setFormError('Model Name is required.');
+        setFormIsSaving(false);
+        return;
+    }
+    // Check for duplicate model name (only when adding, or when editing AND name changed)
+    const isNameUnique = !configurations.some(cfg => 
+        cfg.model_name.toLowerCase() === formModelName.trim().toLowerCase() && 
+        (!editingConfig || cfg.id !== editingConfig.id) // Ignore self when editing
+    );
+    if (!isNameUnique) {
+        setFormError(`A configuration named "${formModelName.trim()}" already exists.`);
+        setFormIsSaving(false);
         return;
     }
 
-    // Ensure selected default LLM corresponds to provided details
-    let isDefaultValid = true;
-    if (defaultLLM === 'claude' && !hasClaudeKey) isDefaultValid = false;
-    else if (defaultLLM === 'gemini' && !hasGeminiKey) isDefaultValid = false;
-    else if (defaultLLM === 'custom' && !hasCustomDetails) isDefaultValid = false;
-    // Also handle case where defaultLLM is somehow set but no options are valid
-    else if (defaultLLM && !canSelectDefault) isDefaultValid = false;
+    if (!formApiKey.trim()) {
+        setFormError('API Key is required.');
+        setFormIsSaving(false);
+        return;
+    }
+    if (isEndpointNowRequired && !formApiEndpoint.trim()) {
+        setFormError('API Endpoint is required for Azure OpenAI and Custom providers.');
+        setFormIsSaving(false);
+        return;
+    }
+    // Basic URL validation for endpoint if provided/required
+    if (formApiEndpoint.trim()) {
+        try {
+            new URL(formApiEndpoint.trim());
+        } catch (_) {
+            setFormError('Invalid API Endpoint URL format.');
+            setFormIsSaving(false);
+            return;
+        }
+    }
+    // --- End Validation ---
     
-    if (!isDefaultValid && defaultLLM) { // Only error if a default *is* selected but it's invalid
-        setError(`Cannot set default to '${defaultLLM}'. Please provide the corresponding API details or choose another default.`);
-        setLoading(false);
-        return;
+    // Data to be saved/updated
+    const configData: Partial<LlmConfiguration> & { profile_id: string } = {
+        profile_id: session.user.id,
+        provider_type: formProviderType,
+        model_name: formModelName.trim(),
+        api_endpoint: isEndpointNowRequired ? formApiEndpoint.trim() : null,
+    };
+
+    // Only include api_key in the update/insert if it's not blank
+    // This prevents overwriting an existing key with blank when editing
+    if (formApiKey.trim()) {
+        configData.api_key = formApiKey.trim();
     }
-    // If no details are provided at all, defaultLLM should be null
-    const finalDefaultLLM = canSelectDefault ? defaultLLM : null;
 
     try {
-      const { error: updateError } = await supabase
-        .from('profiles')
-        .update({
-          claude_api_key: claudeApiKey || null,
-          gemini_api_key: geminiApiKey || null,
-          user_selected_modal_name: customModelName || null, // <-- Save custom name
-          user_selected_modal_api: customModelApiKey || null, // <-- Save custom API key
-          default_llm: finalDefaultLLM, // Use validated/cleared default
-          // Ensure onboarding_complete remains true or handle as needed
-        })
-        .eq('id', session.user.id);
+        let dbError: any = null;
+        if (editingConfig) {
+            // --- Update Existing --- 
+            // Ensure api_key is not set to null if formApiKey was blank
+            if (!configData.api_key) {
+                delete configData.api_key; // Don't update the key if input was blank
+            }
+            console.log("Updating config:", editingConfig.id, "with data:", configData);
+            const { error } = await supabase
+                .from('llm_user_configurations')
+                .update(configData) // Pass the potentially modified configData
+                .eq('id', editingConfig.id);
+            dbError = error;
+            if (!dbError) setSuccessMessage('Configuration updated successfully.');
 
-      if (updateError) throw updateError;
-      
-      // Update local state for defaultLLM in case it was cleared by validation
-      setDefaultLLM(finalDefaultLLM);
+        } else {
+            // --- Insert New --- 
+            // For insert, api_key is required from validation, so configData will have it
+            console.log("Inserting new config with data:", configData);
+             const { error } = await supabase
+                .from('llm_user_configurations')
+                .insert({
+                     ...(configData as Omit<LlmConfiguration, 'id' | 'created_at' | 'is_default'>), // Type assertion needed
+                     is_default: configurations.length === 0 // Make first added config the default
+                 });
+             dbError = error;
+             if (!dbError) setSuccessMessage('Configuration added successfully.');
+        }
 
-      setSuccessMessage('Settings saved successfully!');
-      setTimeout(() => setSuccessMessage(null), 3000); // Clear message after 3s
+        if (dbError) {
+            // Handle specific errors if needed (like unique constraint)
+            throw dbError;
+        } else {
+           setTimeout(() => setSuccessMessage(null), 3000);
+           await fetchData(); // Refresh the list
+           handleCloseForm(); // Close the form on success
+        }
 
     } catch (err: any) {
-      console.error('Error saving settings:', err);
-      setError(err.error_description || err.message || 'Failed to save settings.');
+        console.error('Error saving configuration:', err);
+         // Check for unique constraint violation again (just in case)
+        if (err.code === '23505') { 
+            setFormError(`A configuration named "${formModelName.trim()}" already exists.`);
+        } else {
+            setFormError(err.message || 'Failed to save configuration.');
+        }
     } finally {
-      setLoading(false);
+        setFormIsSaving(false);
+    }
+  };
+
+  const handleCloseForm = () => {
+    setShowForm(false);
+    setEditingConfig(null);
+    setFormError(null);
+    // Reset form fields when closing?
+    // setFormModelName(''); setFormProviderType('Anthropic'); ...etc
+  };
+
+  // --- Other handlers (handleDeleteClick, handleSetDefaultClick) remain the same ---
+  const handleDeleteClick = async (config: LlmConfiguration) => {
+    console.log("Delete configuration clicked:", config.id);
+    if (configurations.length <= 1) {
+        setError("You cannot delete your only LLM configuration.");
+        return;
+    }
+    if (config.is_default) {
+        setError("Cannot delete the default configuration. Set another as default first.");
+        return;
+    }
+    if (!window.confirm(`Are you sure you want to delete the configuration "${config.model_name}"?`)) {
+        return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+        const { error: deleteError } = await supabase
+            .from('llm_user_configurations')
+            .delete()
+            .eq('id', config.id);
+        if (deleteError) throw deleteError;
+        setSuccessMessage('Configuration deleted successfully.');
+        setTimeout(() => setSuccessMessage(null), 3000);
+        await fetchData(); // Refresh list
+    } catch (err: any) {
+        console.error('Error deleting configuration:', err);
+        setError(err.message || 'Failed to delete configuration.');
+    } finally {
+        setLoading(false);
+    }
+  };
+
+  const handleSetDefaultClick = async (configId: string) => {
+    console.log("Set default clicked:", configId);
+    setLoading(true);
+    setError(null);
+    try {
+        // The trigger function `ensure_single_default_llm` handles unsetting the old default
+        const { error: updateError } = await supabase
+            .from('llm_user_configurations')
+            .update({ is_default: true })
+            .eq('id', configId);
+        
+        if (updateError) throw updateError;
+        
+        setSuccessMessage('Default configuration updated.');
+        setTimeout(() => setSuccessMessage(null), 3000);
+        await fetchData(); // Refresh list to show the new default
+    } catch (err: any) {
+        console.error('Error setting default configuration:', err);
+        setError(err.message || 'Failed to set default configuration.');
+    } finally {
+        setLoading(false);
     }
   };
 
   // --- Render Logic ---
-  const canSelectDefault = !!claudeApiKey || !!geminiApiKey || !!(customModelName && customModelApiKey);
-  const isCustomOptionAvailable = !!(customModelName && customModelApiKey);
+  const isPaidUser = extPayUser?.paid === true;
+  const isEndpointRequiredForForm = formProviderType === 'Azure OpenAI' || formProviderType === 'Custom';
 
   return (
     <div className="box">
@@ -139,144 +340,178 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ session }) => {
 
       {!loading && (
         <>
-          {/* API Keys */}
-          <h3>API Keys</h3>
-          {/* Claude Key */}
-          <div className="form-group">
-            <label htmlFor="claudeApiKey">Claude API Key</label>
-            <input
-              type="password"
-              id="claudeApiKey"
-              className="input"
-              placeholder="sk-ant-api... (Optional)"
-              value={claudeApiKey}
-              onChange={(e) => setClaudeApiKey(e.target.value)}
-              disabled={loading}
-            />
+          {/* Payment Status Section */}
+          <div style={{ marginBottom: '20px', paddingBottom: '15px', borderBottom: '1px solid #555' }}>
+            <h3>Account Status</h3>
+            <p>
+                Status: <strong style={{ color: isPaidUser ? '#4ade80' : '#facc15' }}>{isPaidUser ? 'Premium User' : 'Free User'}</strong>
+                {isPaidUser && extPayUser?.email && <small> ({extPayUser.email})</small>}
+            </p>
+            <button 
+                className="button"
+                onClick={() => extpay.openPaymentPage()}
+                style={{ marginTop: '10px' }}
+                disabled={loading && !extPayUser}
+            >
+                {isPaidUser ? 'Manage Subscription / Billing' : 'Upgrade to Premium'}
+            </button>
+            {/* Add Sign Out Button */}
+            <button
+                className="button button-secondary" // Use secondary style or create a specific one
+                onClick={handleSignOut}
+                style={{ marginTop: '10px', marginLeft: '10px' }} // Add some spacing
+                disabled={loading} // Disable while loading/signing out
+            >
+              {loading ? 'Signing Out...' : 'Sign Out'}
+            </button>
           </div>
-          {/* Gemini Key */}
-          <div className="form-group">
-            <label htmlFor="geminiApiKey">Gemini API Key</label>
-            <input
-              type="password"
-              id="geminiApiKey"
-              className="input"
-              placeholder="AIzaSy... (Optional)"
-              value={geminiApiKey}
-              onChange={(e) => setGeminiApiKey(e.target.value)}
-              disabled={loading}
-            />
-          </div>
+
+          {/* LLM Configurations Section */}
+          <h3>LLM Configurations</h3>
           
-          {/* Custom Model Details */}
-          <div style={{ marginTop: '15px', borderTop: '1px solid #444', paddingTop: '10px' }}>
-            <h4 style={{marginBottom: '10px'}}>Custom Model (Optional)</h4>
-             <div className="form-group">
-              <label htmlFor="customModelName">Custom Model Name</label>
-              <input
-                type="text"
-                id="customModelName"
-                className="input"
-                placeholder="e.g., gpt-4o"
-                value={customModelName}
-                onChange={(e) => setCustomModelName(e.target.value)}
-                disabled={loading}
-              />
-            </div>
-             <div className="form-group">
-              <label htmlFor="customModelApiKey">Custom Model API Key</label>
-              <input
-                type="password"
-                id="customModelApiKey"
-                className="input"
-                placeholder="Enter API key"
-                value={customModelApiKey}
-                onChange={(e) => setCustomModelApiKey(e.target.value)}
-                disabled={loading}
-              />
-            </div>
-          </div>
-
-          {/* Default LLM Selection */}
-          <h3 style={{ marginTop: '20px' }}>Default LLM</h3>
-          <div className="radio-group">
-            {/* Claude Option */}
-            {claudeApiKey && (
-                <div className="radio-option">
-                    <input
-                        type="radio"
-                        id="defaultClaudeSettings"
-                        name="defaultLLMSettings"
-                        value="claude"
-                        checked={defaultLLM === 'claude'}
-                        onChange={() => setDefaultLLM('claude')}
+          {/* Configuration List */} 
+          {!loading && configurations.length > 0 && (
+            <ul style={{ listStyle: 'none', padding: 0 }}>
+              {configurations.map((config) => (
+                <li key={config.id} style={{ border: '1px solid #444', borderRadius: '4px', padding: '10px', marginBottom: '10px', background: '#2a2a2a' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <strong style={{ fontSize: '1.1em' }}>{config.model_name}</strong>
+                    <div>
+                      {config.is_default ? (
+                        <span style={{ color: '#4ade80', marginRight: '10px', fontWeight: 'bold' }}>Default</span>
+                      ) : (
+                        <button 
+                          className="button button-secondary" 
+                          style={{ padding: '3px 6px', fontSize: '0.8em', marginRight: '5px' }}
+                          onClick={() => handleSetDefaultClick(config.id)}
+                          disabled={loading}
+                        >
+                          Set Default
+                        </button>
+                      )}
+                      <button 
+                        className="button button-secondary" 
+                        style={{ padding: '3px 6px', fontSize: '0.8em', marginRight: '5px' }}
+                        onClick={() => handleEditClick(config)}
                         disabled={loading}
-                    />
-                    <label htmlFor="defaultClaudeSettings">Claude</label>
-                </div>
-            )}
-            {/* Gemini Option */}
-            {geminiApiKey && (
-                <div className="radio-option">
-                    <input
-                        type="radio"
-                        id="defaultGeminiSettings"
-                        name="defaultLLMSettings"
-                        value="gemini"
-                        checked={defaultLLM === 'gemini'}
-                        onChange={() => setDefaultLLM('gemini')}
-                        disabled={loading}
-                    />
-                    <label htmlFor="defaultGeminiSettings">Gemini</label>
-                </div>
-            )}
-            {/* Custom Option - Enabled only if name and key provided */}
-            {isCustomOptionAvailable && (
-                 <div className="radio-option">
-                    <input
-                        type="radio"
-                        id="defaultCustomSettings"
-                        name="defaultLLMSettings"
-                        value="custom"
-                        checked={defaultLLM === 'custom'}
-                        onChange={() => setDefaultLLM('custom')}
-                        disabled={loading}
-                    />
-                    <label htmlFor="defaultCustomSettings">Custom ({customModelName || 'Unnamed'})</label>
-                </div>
-            )}
-            {/* Message if no options are configured */}
-             {!canSelectDefault && (
-                 <p><small>Provide API details above for at least one LLM to select a default.</small></p>
-             )}
-          </div>
+                       >
+                          Edit
+                      </button>
+                      <button 
+                        className="button button-danger" // Assuming a danger style
+                        style={{ padding: '3px 6px', fontSize: '0.8em' }}
+                        onClick={() => handleDeleteClick(config)}
+                        disabled={loading || config.is_default || configurations.length <= 1}
+                      >
+                          Delete
+                      </button>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: '0.9em', color: '#ccc' }}>
+                    Provider: {config.provider_type}
+                    {config.api_endpoint && ` | Endpoint: ${config.api_endpoint}`}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+          {!loading && configurations.length === 0 && (
+            <p>No LLM configurations found. Add one below.</p>
+          )}
 
-          {/* Save Button */}
-          <button
-            className="button"
-            onClick={handleSaveSettings}
-            disabled={loading}
-            style={{ marginTop: '20px' }}
-          >
-            {loading ? <span className="loading"></span> : 'Save Settings'}
-          </button>
-
-          {/* Sign Out Button */}
-          <div style={{marginTop: '30px', borderTop: '1px solid #444', paddingTop: '15px'}}>
+          {/* Add New Button */} 
+          {!loading && (
               <button 
-                  className="button"
-                  style={{backgroundColor: '#a00'}} // Warning color
-                  onClick={async () => {
-                    setLoading(true);
-                    await supabase.auth.signOut();
-                    // App.tsx listener will handle session change
-                    setLoading(false);
-                  }}
-                  disabled={loading}
+                className="button button-primary" 
+                onClick={handleAddClick}
+                disabled={loading || configurations.length >= MAX_CONFIGURATIONS}
+                style={{ marginTop: '15px' }}
+                title={configurations.length >= MAX_CONFIGURATIONS ? `Maximum ${MAX_CONFIGURATIONS} configurations reached` : 'Add a new LLM configuration'}
               >
-                  Sign Out
+                Add New Configuration
               </button>
-          </div>
+          )}
+
+          {/* Add/Edit Form (Modal or Inline) */} 
+          {showForm && (
+              <div className="modal-or-inline-form" style={{ marginTop: '20px', padding: '15px', border: '1px solid #555', borderRadius: '4px', background: '#333' }}>
+                <h4>{editingConfig ? 'Edit Configuration' : 'Add New Configuration'}</h4>
+                {formError && <p className="error" style={{ color: '#f87171'}}>{formError}</p>}
+                
+                {/* Form fields */} 
+                {/* Model Name */}
+                <div className="form-group">
+                    <label htmlFor="formModelName">Model Name *</label>
+                    <input
+                        type="text"
+                        id="formModelName"
+                        className="input"
+                        placeholder="Unique name (e.g., Personal Claude)"
+                        value={formModelName}
+                        onChange={(e) => setFormModelName(e.target.value)}
+                        disabled={formIsSaving}
+                        required
+                    />
+                </div>
+                {/* Provider Type */}
+                <div className="form-group">
+                    <label htmlFor="formProviderType">Provider Type *</label>
+                    <select
+                        id="formProviderType"
+                        className="input"
+                        value={formProviderType}
+                        onChange={(e) => setFormProviderType(e.target.value as ProviderType)}
+                        disabled={formIsSaving}
+                        required
+                    >
+                        {providerTypes.map(type => (
+                            <option key={type} value={type}>{type}</option>
+                        ))}
+                    </select>
+                </div>
+                {/* API Key */}
+                <div className="form-group">
+                    <label htmlFor="formApiKey">API Key *</label>
+                    <input
+                        type="password"
+                        id="formApiKey"
+                        className="input"
+                        placeholder={editingConfig ? "Enter new key to update" : "Enter API key"}
+                        value={formApiKey}
+                        onChange={(e) => setFormApiKey(e.target.value)}
+                        disabled={formIsSaving}
+                        required
+                    />
+                     {editingConfig && <small style={{ display: 'block', color: '#aaa', marginTop: '3px' }}>Leave blank to keep existing key.</small>}
+                </div>
+                {/* API Endpoint (Conditional) */}
+                {isEndpointRequiredForForm && (
+                    <div className="form-group">
+                        <label htmlFor="formApiEndpoint">API Endpoint *</label>
+                        <input
+                            type="text"
+                            id="formApiEndpoint"
+                            className="input"
+                            placeholder="Full URL for the API endpoint"
+                            value={formApiEndpoint}
+                            onChange={(e) => setFormApiEndpoint(e.target.value)}
+                            disabled={formIsSaving}
+                            required={isEndpointRequiredForForm}
+                        />
+                    </div>
+                )}
+
+                {/* Form Action Buttons */} 
+                <div style={{ marginTop: '15px' }}>
+                    <button onClick={handleCloseForm} className="button button-secondary" style={{ marginRight: '10px' }} disabled={formIsSaving}>
+                        Cancel
+                    </button>
+                    <button onClick={handleSaveForm} className="button button-primary" disabled={formIsSaving}>
+                        {formIsSaving ? <span className="loading"></span> : (editingConfig ? 'Update Configuration' : 'Save Configuration')}
+                    </button>
+                </div>
+              </div>
+          )}
         </>
       )}
     </div>

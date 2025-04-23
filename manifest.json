@@ -1,0 +1,43 @@
+{
+  "version": "0.0.0",
+  "manifest_version": 3,
+  "name": "Lightning Bolt Fix",
+  "permissions": [
+    "activeTab",
+    "sidePanel",
+    "storage",
+    "scripting",
+    "tabs"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' https://*.supabase.co https://api.anthropic.com https://generativelanguage.googleapis.com https://extensionpay.com;"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+        "matches": ["https://bolt.new/*"],
+        "js": ["content.js"]
+    }
+  ],
+  "action": {
+    "default_icon": {
+        "16": "icons/icon16.png",
+        "48": "icons/icon48.png",
+        "128": "icons/icon128.png"
+    },
+    "default_title": "Lightning Bolt Fix"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+} 

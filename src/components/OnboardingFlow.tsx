@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { supabase } from '../supabaseClient';
 import type { Session } from '@supabase/supabase-js';
 
@@ -7,52 +7,40 @@ interface OnboardingFlowProps {
   onOnboardingComplete: () => void;
 }
 
+// Define allowed provider types
+type ProviderType = 'Anthropic' | 'Google' | 'OpenAI' | 'Azure OpenAI' | 'Custom';
+const providerTypes: ProviderType[] = ['Anthropic', 'Google', 'OpenAI', 'Azure OpenAI', 'Custom'];
+
 const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ session, onOnboardingComplete }) => {
-  const [currentStep, setCurrentStep] = useState(1); // Start at API keys step
+  // Step 1: Collect LLM Config, Step 2: Instructions
+  const [currentStep, setCurrentStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // State for API keys
-  const [claudeApiKey, setClaudeApiKey] = useState('');
-  const [geminiApiKey, setGeminiApiKey] = useState('');
-  const [customModelName, setCustomModelName] = useState('');
-  const [customModelApiKey, setCustomModelApiKey] = useState('');
+  // State for the single default LLM configuration
+  const [modelName, setModelName] = useState('');
+  const [providerType, setProviderType] = useState<ProviderType>('Anthropic'); // Default to Anthropic
+  const [apiKey, setApiKey] = useState('');
+  const [apiEndpoint, setApiEndpoint] = useState(''); // Optional endpoint
 
-  // State for default LLM
-  const [defaultLLM, setDefaultLLM] = useState<string | null>(null);
+  // Determine if endpoint is required based on provider type
+  const isEndpointRequired = providerType === 'Azure OpenAI' || providerType === 'Custom';
 
-  // Determine available LLM options based on provided inputs
-  const getAvailableLLMOptions = () => {
-    const options: string[] = [];
-    if (claudeApiKey) options.push('claude');
-    if (geminiApiKey) options.push('gemini');
-    if (customModelName && customModelApiKey) options.push('custom');
-    return options;
-  };
-
-  // Set default LLM automatically if only one key is provided, or on step change
-  useEffect(() => {
-    if (currentStep === 2) { // Only adjust default on the LLM selection step
-        const availableOptions = getAvailableLLMOptions();
-        if (availableOptions.length === 1) {
-            setDefaultLLM(availableOptions[0]);
-        } else if (!availableOptions.includes(defaultLLM ?? '')) {
-            // Reset if current default is no longer valid or if null
-            setDefaultLLM(availableOptions.length > 0 ? availableOptions[0] : null);
-        }
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [claudeApiKey, geminiApiKey, customModelName, customModelApiKey, currentStep]); // Rerun when keys or step change
-
-
-  const totalSteps = 3; // 1: API Keys, 2: Default LLM, 3: Instructions
+  // Total steps reduced to 2 (LLM Config, Instructions)
+  const totalSteps = 2;
 
   const nextStep = () => {
     if (currentStep < totalSteps) {
-        // Validation for Step 1 (API Keys)
-        if (currentStep === 1 && !claudeApiKey && !geminiApiKey && !(customModelName && customModelApiKey)) {
-            setError('Please provide API details for at least one LLM (Claude, Gemini, or Custom).');
-            return;
+        // Validation for Step 1 (LLM Configuration)
+        if (currentStep === 1) {
+            if (!modelName || !providerType || !apiKey) {
+                setError('Please fill in Model Name, select Provider Type, and provide the API Key.');
+                return;
+            }
+            if (isEndpointRequired && !apiEndpoint) {
+                setError('API Endpoint is required for Azure OpenAI and Custom provider types.');
+                return;
+            }
         }
         setError(null); // Clear error on successful navigation
         setCurrentStep(currentStep + 1);
@@ -67,35 +55,45 @@ const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ session, onOnboardingCo
   };
 
   const handleFinishOnboarding = async () => {
+    // Final validation (redundant if nextStep validation works, but good practice)
+     if (!modelName || !providerType || !apiKey || (isEndpointRequired && !apiEndpoint)) {
+        setError('Please ensure all required fields are filled correctly.');
+        setCurrentStep(1); // Go back to config step
+        return;
+     }
+
     setLoading(true);
     setError(null);
     try {
-        // Validate Step 2 (Default LLM) before finishing
-        let isValidDefault = false;
-        if (defaultLLM === 'claude' && claudeApiKey) isValidDefault = true;
-        else if (defaultLLM === 'gemini' && geminiApiKey) isValidDefault = true;
-        else if (defaultLLM === 'custom' && customModelName && customModelApiKey) isValidDefault = true;
+      // Insert the new LLM configuration
+      const { error: insertError } = await supabase
+        .from('llm_user_configurations')
+        .insert({
+          profile_id: session.user.id,
+          provider_type: providerType,
+          model_name: modelName,
+          api_key: apiKey,
+          api_endpoint: isEndpointRequired ? apiEndpoint : null, // Only save if required
+          is_default: true // This first one is the default
+        });
 
-        if (!defaultLLM || !isValidDefault) {
-            setError('Please select a valid default LLM based on the details you provided.');
-            setLoading(false);
-            setCurrentStep(2); // Go back to LLM step
-            return;
-        }
+      if (insertError) throw insertError;
 
+      // Update the profile to mark onboarding as complete
       const { error: updateError } = await supabase
         .from('profiles')
         .update({
-          claude_api_key: claudeApiKey || null, 
-          gemini_api_key: geminiApiKey || null, 
-          user_selected_modal_name: customModelName || null,
-          user_selected_modal_api: customModelApiKey || null,
-          default_llm: defaultLLM,
           onboarding_complete: true,
+          // We no longer store default_llm here directly
         })
         .eq('id', session.user.id);
 
-      if (updateError) throw updateError;
+        if (updateError) {
+            // Attempt to roll back the LLM config insertion if profile update fails?
+            // For simplicity now, just log and report the error.
+            console.error('Failed to mark onboarding complete after saving LLM config:', updateError);
+            throw new Error('Failed to finalize onboarding.');
+        }
 
       // Call the callback to signal completion to App.tsx
       onOnboardingComplete();
@@ -103,211 +101,162 @@ const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ session, onOnboardingCo
 
     } catch (err: any) {
       console.error('Finish Onboarding Error:', err);
-      setError(err.error_description || err.message || 'Failed to save onboarding data');
+      // Check for unique constraint violation (duplicate model name for user)
+      if (err.code === '23505') { // PostgreSQL unique violation code
+        setError(`You already have a configuration named "${modelName}". Please choose a different name.`);
+        setCurrentStep(1); // Go back to config step
+      } else {
+        setError(err.error_description || err.message || 'Failed to save onboarding data');
+      }
     } finally {
       // Loading state is managed by App.tsx after callback
-      // setLoading(false); 
+      // setLoading(false);
     }
   };
 
   // --- Render Logic ---
   const renderStepContent = () => {
-    const availableOptions = getAvailableLLMOptions();
     switch (currentStep) {
-      case 1: // API Keys
+      case 1: // LLM Configuration
         return (
           <div className="box">
-            <h2>Add Your API Keys</h2>
-            <p>Provide API details for <strong>at least one</strong> LLM service.</p>
+            <h2>Configure Your Default LLM</h2>
+            <p>Provide details for the primary LLM service you want to use.</p>
 
-            {/* Claude */}
+            {/* Model Name */}
             <div className="form-group">
-              <label htmlFor="onboardingClaudeApiKey">Claude API Key (Anthropic)</label>
+              <label htmlFor="onboardingModelName">Model Name *</label>
               <input
-                type="password"
-                id="onboardingClaudeApiKey"
+                type="text"
+                id="onboardingModelName"
                 className="input"
-                placeholder="sk-ant-api... (Optional)"
-                value={claudeApiKey}
-                onChange={(e) => setClaudeApiKey(e.target.value)}
+                placeholder="e.g., My Claude Sonnet, Personal Gemini"
+                value={modelName}
+                onChange={(e) => setModelName(e.target.value)}
                 disabled={loading}
+                required
               />
             </div>
 
-            {/* Gemini */}
+            {/* Provider Type */}
             <div className="form-group">
-              <label htmlFor="onboardingGeminiApiKey">Gemini API Key (Google AI Studio)</label>
+                <label htmlFor="onboardingProviderType">Provider Type *</label>
+                <select
+                    id="onboardingProviderType"
+                    className="input" // Use 'input' class for similar styling or create a 'select' class
+                    value={providerType}
+                    onChange={(e) => setProviderType(e.target.value as ProviderType)}
+                    disabled={loading}
+                    required
+                >
+                    {providerTypes.map(type => (
+                        <option key={type} value={type}>{type}</option>
+                    ))}
+                </select>
+            </div>
+
+            {/* API Key */}
+            <div className="form-group">
+              <label htmlFor="onboardingApiKey">API Key *</label>
               <input
                 type="password"
-                id="onboardingGeminiApiKey"
+                id="onboardingApiKey"
                 className="input"
-                placeholder="AIzaSy... (Optional)"
-                value={geminiApiKey}
-                onChange={(e) => setGeminiApiKey(e.target.value)}
+                placeholder="sk-... or AIzaSy... etc."
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
                 disabled={loading}
+                required
               />
             </div>
 
-            {/* Custom Model */}
-            <div style={{ marginTop: '20px', borderTop: '1px solid #444', paddingTop: '15px' }}>
-                <p style={{ fontSize: '0.9em', color: '#ccc', marginBottom: '10px' }}>Alternatively, provide details for a different model:</p>
+            {/* API Endpoint (Conditional) */}
+            {isEndpointRequired && (
                 <div className="form-group">
-                <label htmlFor="onboardingCustomName">Custom Model Name</label>
+                <label htmlFor="onboardingApiEndpoint">API Endpoint *</label>
                 <input
-                    type="text"
-                    id="onboardingCustomName"
+                    type="text" // Consider type="url" for basic browser validation
+                    id="onboardingApiEndpoint"
                     className="input"
-                    placeholder="e.g., gpt-4o (Optional)"
-                    value={customModelName}
-                    onChange={(e) => setCustomModelName(e.target.value)}
+                    placeholder="Enter the full API endpoint URL"
+                    value={apiEndpoint}
+                    onChange={(e) => setApiEndpoint(e.target.value)}
                     disabled={loading}
+                    required={isEndpointRequired} // HTML5 validation
                 />
-                </div>
-                <div className="form-group">
-                <label htmlFor="onboardingCustomApiKey">Custom Model API Key</label>
-                <input
-                    type="password"
-                    id="onboardingCustomApiKey"
-                    className="input"
-                    placeholder="Enter API key (Optional)"
-                    value={customModelApiKey}
-                    onChange={(e) => setCustomModelApiKey(e.target.value)}
-                    disabled={loading}
-                />
-                </div>
-            </div>
-          </div>
-        );
-      case 2: // Set Default LLM
-        return (
-          <div className="box">
-            <h2>Choose Default LLM</h2>
-            <p>Select which available LLM you want to use by default:</p>
-
-            {availableOptions.length === 0 ? (
-                <p className='error'>Please go back and provide API details for at least one LLM.</p>
-            ) : (
-                <div className="radio-group" style={{ flexDirection: 'column', alignItems: 'flex-start' }}>
-                    {/* Claude Option */}
-                    {claudeApiKey && (
-                        <div className="radio-option">
-                        <input
-                            type="radio"
-                            id="defaultClaude"
-                            name="defaultLLM"
-                            value="claude"
-                            checked={defaultLLM === 'claude'}
-                            onChange={() => setDefaultLLM('claude')}
-                            disabled={loading}
-                        />
-                        <label htmlFor="defaultClaude">Claude (Sonnet 3.5)</label>
-                        </div>
-                    )}
-                    {/* Gemini Option */}
-                    {geminiApiKey && (
-                        <div className="radio-option">
-                        <input
-                            type="radio"
-                            id="defaultGemini"
-                            name="defaultLLM"
-                            value="gemini"
-                            checked={defaultLLM === 'gemini'}
-                            onChange={() => setDefaultLLM('gemini')}
-                            disabled={loading}
-                        />
-                        <label htmlFor="defaultGemini">Gemini (Pro 1.5)</label>
-                        </div>
-                    )}
-                    {/* Custom Option - Only show if name and key are provided */}
-                    {(customModelName && customModelApiKey) && (
-                        <div className="radio-option">
-                        <input
-                            type="radio"
-                            id="defaultCustom"
-                            name="defaultLLM"
-                            value="custom"
-                            checked={defaultLLM === 'custom'}
-                            onChange={() => setDefaultLLM('custom')}
-                            disabled={loading}
-                        />
-                        <label htmlFor="defaultCustom">Custom ({customModelName || 'Unnamed'})</label>
-                        </div>
-                    )}
+                <p style={{ fontSize: '0.8em', color: '#aaa', marginTop: '5px' }}>
+                    Required for Azure OpenAI and Custom providers.
+                </p>
                 </div>
             )}
+
           </div>
         );
-      case 3: // Instructions
+      case 2: // Instructions (Old Step 3 is now Step 2)
         return (
           <div className="box">
             <h2>How to Use Lightning Bolt Fix</h2>
             <ol style={{ paddingLeft: '20px', listStyle: 'decimal' }}>
               <li>Navigate to a Bolt.new project.</li>
               <li>When you encounter an error, click the Lightning Bolt Fix icon in your browser toolbar.</li>
-              <li>Use the "Pick Element" button to select the error message on the page, or paste it manually.</li>
+              {/*<li>Use the \"Pick Element\" button to select the error message on the page, or paste it manually.</li>*/}
+              <li>Select text containing the error message on the page.</li>
+              <li>Click the "Capture Selection" button in the side panel.</li>
               <li>Manually copy the full code from the relevant file and paste it into the 'Paste Entire Errant Code Here' box.</li>
-              <li>Click "Fix Code" to get an AI-powered explanation and solution.</li>
+              <li>Click "Fix Code" to get an AI-powered explanation and solution using your configured default LLM.</li>
               <li>Copy the fixed code and apply it to your project.</li>
             </ol>
-            <p style={{ marginTop: '15px', fontStyle: 'italic' }}>Tip: Manage your API keys and default LLM in the Settings tab later.</p>
+            <p style={{ marginTop: '15px', fontSize: '0.9em' }}>
+              You can add more LLM configurations and change your default in the Settings tab later.
+            </p>
           </div>
         );
       default:
-        return null;
+        return <div>Unknown step</div>;
     }
   };
 
   return (
-    <div className="auth-container"> {/* Reusing auth-container style */}
-      <div className="auth-header">
-        <img
-          src="https://i.imgur.com/twNKfqN.png"
-          alt="Lightning Bolt Fix Logo"
-          style={{
-            width: '90px',
-            height: '90px',
-            display: 'block', // Center the image
-            margin: '0 auto 16px auto' // Add bottom margin
-          }}
-        />
-        <h1>Welcome!</h1>
-        <p>Let's get you set up, {session.user.email}</p>
+    <div className="onboarding-container">
+       <img src="/icons/icon128.png" alt="Lightning Bolt Fix Logo" style={{ width: '90px', height: '90px', display: 'block', margin: '0 auto 20px auto' }} />
+      <h1>Welcome to Lightning Bolt Fix!</h1>
+      <p>Let's get you set up.</p>
+
+      {/* Step Indicator */}
+      <div className="step-indicator" style={{ margin: '20px 0', textAlign: 'center' }}>
+        Step {currentStep} of {totalSteps}
       </div>
 
-      <div className="step-indicator">
-        {[...Array(totalSteps)].map((_, i) => (
-          <div key={i} className={`step-dot ${currentStep === i + 1 ? 'active' : ''}`}></div>
-        ))}
-      </div>
-
+      {/* Render current step content */}
       {renderStepContent()}
 
-      {error && <p className="error" style={{marginTop: '10px', textAlign: 'center'}}>{error}</p>}
+      {/* Error Display */}
+      {error && <p className="error-message" style={{ color: 'red', marginTop: '15px', textAlign: 'center' }}>{error}</p>}
 
-      <div className="onboarding-buttons">
+      {/* Navigation Buttons */}
+      <div className="navigation-buttons" style={{ marginTop: '20px', display: 'flex', justifyContent: 'space-between' }}>
         <button
-          className="button"
+          className="button button-secondary" // Add appropriate classes
           onClick={prevStep}
           disabled={currentStep === 1 || loading}
-          style={{ backgroundColor: currentStep === 1 ? '#555' : '#262626' }}
         >
           Back
         </button>
         {currentStep < totalSteps ? (
           <button
-            className="button"
+            className="button button-primary" // Add appropriate classes
             onClick={nextStep}
-            disabled={loading || (currentStep === 1 && !claudeApiKey && !geminiApiKey && !(customModelName && customModelApiKey)) || (currentStep === 2 && getAvailableLLMOptions().length === 0)}
+            disabled={loading}
           >
             Next
           </button>
         ) : (
           <button
-            className="button"
+            className="button button-primary" // Add appropriate classes
             onClick={handleFinishOnboarding}
-            disabled={loading || !defaultLLM}
+            disabled={loading}
           >
-            {loading ? <span className="loading"></span> : 'I Got It!'}
+            {loading ? 'Saving...' : 'Finish Setup'}
           </button>
         )}
       </div>

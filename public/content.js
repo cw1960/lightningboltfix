@@ -79,31 +79,7 @@ function deactivatePickerMode() {
   currentPickerType = null; 
 }
 
-// Listener for messages from the Side Panel (MainApp)
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  console.log("LBF Content Script received message:", message);
-  
-  if (message.type === 'START_ELEMENT_PICKING') {
-    activatePickerMode('element');
-    document.addEventListener('click', handleElementClick, { capture: true, once: true }); 
-    return false; 
-  } 
-  
-  return false; 
-});
-
-// --- Signal Readiness --- 
-// Send a message to the background script indicating the content script is ready to receive messages
-console.log("LBF: Content script attempting to signal readiness to background.");
-chrome.runtime.sendMessage({ type: 'CONTENT_SCRIPT_READY' }, (response) => {
-    if (chrome.runtime.lastError) {
-        console.error("LBF: Error signaling readiness:", chrome.runtime.lastError.message || chrome.runtime.lastError);
-    } else {
-        console.log("LBF: Successfully signaled readiness to background. Response:", response);
-    }
-});
-
-// Click handler specifically for ELEMENT picking
+// Click handler specifically for ERROR MESSAGE picking
 const handleElementClick = (event) => {
    if (!isPickerActive || currentPickerType !== 'element') return; 
    console.log(`LBF: Click intercepted for [${currentPickerType}]:`, event.target);
@@ -126,6 +102,64 @@ const handleElementClick = (event) => {
 
    deactivatePickerMode(); 
 };
+
+// Click handler specifically for PLAN picking
+const handlePlanElementClick = (event) => {
+  if (!isPickerActive || currentPickerType !== 'plan') return;
+  console.log(`LBF: Click intercepted for [${currentPickerType}]:`, event.target);
+  event.preventDefault();
+  event.stopPropagation();
+  
+  const clickedElement = event.target;
+  // For plan, consider using innerText which respects line breaks better, or outerHTML if structure is needed
+  const text = clickedElement.innerText?.trim() || clickedElement.textContent?.trim() || ''; 
+  console.log("LBF: Captured plan text (innerText or textContent):", text);
+  
+  const messageType = 'PLAN_ELEMENT_PICKED'; // Different message type
+  
+  chrome.runtime.sendMessage({ type: messageType, payload: text }, (response) => {
+      if (chrome.runtime.lastError) {
+          console.error(`LBF: Error sending ${messageType} message:`, chrome.runtime.lastError.message || chrome.runtime.lastError);
+      } else {
+          console.log(`LBF: ${messageType} message sent successfully. Response:`, response);
+      }
+  });
+
+  deactivatePickerMode();
+};
+
+// Listener for messages from the Side Panel (MainApp)
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  console.log("LBF Content Script received message:", message);
+  
+  if (message.type === 'START_ELEMENT_PICKING') {
+    activatePickerMode('element');
+    document.addEventListener('click', handleElementClick, { capture: true, once: true }); 
+    sendResponse({ status: "Element picking started" });
+    return true; // Keep channel open for potential async response (though unlikely needed here)
+  }
+
+  if (message.type === 'START_PLAN_ELEMENT_PICKING') {
+    activatePickerMode('plan'); 
+    // Add the specific click listener for the plan picker
+    document.addEventListener('click', handlePlanElementClick, { capture: true, once: true }); 
+    sendResponse({ status: "Plan picking started" });
+    return false; 
+  } 
+  
+  return false; 
+});
+
+// --- Signal Readiness --- 
+// Send a message to the background script indicating the content script is ready to receive messages
+console.log("LBF: Content script attempting to signal readiness to background.");
+chrome.runtime.sendMessage({ type: 'CONTENT_SCRIPT_READY' }, (response) => {
+    if (chrome.runtime.lastError) {
+        console.error("LBF: Error signaling readiness:", chrome.runtime.lastError.message || chrome.runtime.lastError);
+    } else {
+        console.log("LBF: Successfully signaled readiness to background. Response:", response);
+    }
+});
 
 // --- Mutation Observer (for potential future automatic error detection) ---
 

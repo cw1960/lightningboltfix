@@ -1,16 +1,24 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
 import type { Session } from '@supabase/supabase-js';
+import ExtPay from 'extpay'; // <-- Import ExtPay
 import SettingsTab from './SettingsTab'; // Import SettingsTab
 import AnalyticsTab from './AnalyticsTab'; // Import AnalyticsTab
 
-// Define expected structure for profile data
-interface ProfileData {
-    claude_api_key: string | null;
-    gemini_api_key: string | null;
-    user_selected_modal_name: string | null;
-    user_selected_modal_api: string | null;
-    default_llm: string | null;
+// Initialize ExtPay - Use your Extension ID
+const extpay = ExtPay('lightning-bolt-fix');
+
+// Define structure for a single LLM configuration row
+// Matches the llm_user_configurations table
+interface LlmConfiguration {
+    id: string; // UUID
+    profile_id: string; // UUID
+    provider_type: 'Anthropic' | 'Google' | 'OpenAI' | 'Azure OpenAI' | 'Custom';
+    model_name: string;
+    api_key: string;
+    api_endpoint: string | null;
+    is_default: boolean;
+    created_at: string; // timestamp
 }
 
 interface MainAppProps {
@@ -29,6 +37,10 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
   const [activeTab, setActiveTab] = useState('fix'); // Add state for active tab ('fix', 'settings', 'analytics')
   const [fixSavedCounter, setFixSavedCounter] = useState(0); // <-- Add counter state
   const [isPickingElement, setIsPickingElement] = useState(false); // State for error picker mode
+  const [errorFixPlan, setErrorFixPlan] = useState(''); // <-- Add state for the plan
+  const [isPickingPlanElement, setIsPickingPlanElement] = useState(false); // <-- Add state for plan picker mode
+
+  const FREE_FIX_LIMIT = 10;
 
   // --- Message Listener Effect ---
   useEffect(() => {
@@ -41,6 +53,14 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
         setIsPickingElement(false); // Turn off error picker mode
         sendResponse({ status: "ELEMENT_PICKED received" }); // Acknowledge message
         return true; // Indicate async response (though we send it immediately)
+      }
+
+      if (message.type === 'PLAN_ELEMENT_PICKED') {
+        console.log("Received picked plan text:", message.payload);
+        setErrorFixPlan(message.payload); // <-- Set plan state
+        setIsPickingPlanElement(false); // <-- Turn off plan picker mode
+        sendResponse({ status: "PLAN_ELEMENT_PICKED received" });
+        return true;
       }
 
       // If message is not handled, return false or undefined
@@ -70,6 +90,8 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
     setLoading(false);
     setCopyButtonText('Copy Fixed Code'); 
     setIsPickingElement(false); 
+    setErrorFixPlan(''); // <-- Clear plan state
+    setIsPickingPlanElement(false); // <-- Clear plan picker state
     console.log('State reset for new error.');
   };
 
@@ -111,148 +133,295 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
     }
   };
 
+  // --- Handler for the *new* Plan Picker Button ---
+  const handlePickPlanElementClick = async () => {
+    setIsPickingPlanElement(true);
+    setError(null);
+    let tabId: number | undefined = undefined;
+    try {
+      const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      tabId = activeTab?.id;
+      if (!tabId) throw new Error('Could not find active tab.');
+
+      const isReady = await checkContentScriptReady(tabId);
+      if (!isReady) {
+          throw new Error("Content script not ready on the active page. Please reload the page or try again.");
+      }
+
+      console.log('Sending START_PLAN_ELEMENT_PICKING to tab:', tabId);
+      // Send a distinct message type for the plan picker
+      await chrome.tabs.sendMessage(tabId, { type: 'START_PLAN_ELEMENT_PICKING' }); 
+    } catch (err: any) {
+      console.error("Error starting plan element picker:", err);
+      setError(`Failed to start plan element picker: ${err.message}`);
+      setIsPickingPlanElement(false); // Reset state on error
+    }
+  };
+
   // --- Handle Fix Code Logic ---
   const handleFixCode = async () => {
     setLoading(true);
     setError(null);
     setFixedCode(null);
     setExplanation(null);
-    // setOriginalCodeForDiff(errantCode); // Uncomment when adding diff viewer
 
-    let llmProvider = ''; // Keep track for saving later
+    let defaultLlmConfig: LlmConfiguration | null = null; // Store the fetched config
 
     try {
-      // 1. Fetch user profile data (include new fields)
-      const { data: profile, error: profileError } = await supabase
-        .from('profiles')
-        .select('claude_api_key, gemini_api_key, user_selected_modal_name, user_selected_modal_api, default_llm') // Added custom fields
-        .eq('id', session.user.id)
-        .single<ProfileData>();
+      // --- Payment & Free Fix Check (Keep this logic as is) --- 
+      let canProceed = false;
+      try {
+        const extUser = await extpay.getUser();
+        if (extUser.paid) {
+            console.log("User is paid. Proceeding with fix.");
+            canProceed = true;
+        } else {
+            console.log("User is not paid. Checking free fixes...");
+            // Fetch profile specifically for free fixes count
+            const { data: freeFixProfile, error: freeFixError } = await supabase
+              .from('profiles')
+              .select('free_fixes_used') // Still need this from profiles
+              .eq('id', session.user.id)
+              .single<{ free_fixes_used: number }>();
 
-      if (profileError) throw new Error(`Failed to fetch profile: ${profileError.message}`);
-      if (!profile) throw new Error('User profile not found.');
+            if (freeFixError) throw new Error("Could not verify free fix count.");
+            
+            const fixesUsed = freeFixProfile?.free_fixes_used ?? 0;
+            console.log(`Free fixes used: ${fixesUsed} / ${FREE_FIX_LIMIT}`);
 
-      // 2. Determine LLM and API details
-      const llmToUse = profile.default_llm;
-      // Use custom model name for provider if 'custom' is selected
-      llmProvider = llmToUse === 'custom' ? (profile.user_selected_modal_name || 'Custom') : (llmToUse ?? '');
-      let apiKey: string | null = null;
+            if (fixesUsed < FREE_FIX_LIMIT) {
+                console.log("Free fix available. Incrementing count...");
+                const { error: rpcError } = await supabase.rpc('increment_free_fixes', { 
+                    user_id_to_increment: session.user.id 
+                });
+                if (rpcError) {
+                    console.error("Failed to increment free fix counter:", rpcError);
+                    throw new Error("Failed to update free fix count. Please try again.");
+                }
+                console.log("Free fix count incremented. Proceeding with fix.");
+                canProceed = true;
+            } else {
+                 throw new Error(`Free fix limit (${FREE_FIX_LIMIT}/${FREE_FIX_LIMIT}) reached. Please upgrade via the Settings tab.`);
+            }
+        }
+      } catch (extPayCheckError: any) {
+          console.error("Error during payment/free fix check:", extPayCheckError);
+          throw extPayCheckError;
+      }
+
+      if (!canProceed) {
+          throw new Error("Could not proceed with fix due to payment or free limit status.");
+      }
+      // --- End Payment & Free Fix Check ---
+
+      // 1. Fetch the user's default LLM configuration
+      const { data: configData, error: configError } = await supabase
+        .from('llm_user_configurations')
+        .select('*') // Select all columns from the config table
+        .eq('profile_id', session.user.id)
+        .eq('is_default', true)
+        .limit(1) // Should only be one default
+        .maybeSingle<LlmConfiguration>(); // Use maybeSingle in case no default is set
+
+      if (configError) throw new Error(`Failed to fetch LLM configuration: ${configError.message}`);
+      if (!configData) throw new Error('No default LLM configuration found. Please set one in Settings.');
+      
+      defaultLlmConfig = configData; // Assign to the outer scope variable
+
+      // 2. Determine API details based on the provider type
+      const llmProvider = defaultLlmConfig.provider_type;
+      const llmModelName = defaultLlmConfig.model_name;
+      const apiKey = defaultLlmConfig.api_key;
       let apiUrl: string = '';
       let requestBody: any = {};
       let headers: HeadersInit = { 'Content-Type': 'application/json' };
-      let isCustomModel = false;
 
-      // Construct the shared prompt content
-      const promptContent = `Error Message: ${errorMessage}\n\nErrant Code:\n\`\`\`\n${errantCode}\n\`\`\`\n\nFix the errant code. Provide your response in two parts: First, an explanation of the error and the fix. Second, the complete fixed code block enclosed in \`\`\`language\n...\n\`\`\` markers.`;
+      // Construct the shared prompt content - Include Plan
+      const promptContent =
+        'Error Message:\n' + errorMessage + '\n\n' +
+        'Plan to Fix the Error:\n' + errorFixPlan + '\n\n' +
+        'Errant Code (Full File Content):\n' +
+        '```\n' + errantCode + '\n```\n\n' +
+        '## CRITICAL TASK ##\n' +
+        'You MUST fix the errant code provided above, **strictly following the Plan provided**. Your response MUST strictly follow this format:\n\n' +
+        '1.  **Explanation:**\n' +
+        '    A concise explanation of the error and the fix applied (informed by the Plan).\n\n' +
+        '2.  **Fixed Code (Complete File):**\n' +
+        '    This section MUST contain the **ENTIRE, UNMODIFIED ORIGINAL CODE PLUS THE FIX**. It is ESSENTIAL that you return the *full file content* as it needs to replace the original file directly. \n' +
+        '    - **DO NOT** return only the changed snippet or function.\n' +
+        '    - **DO NOT** omit any imports, comments, or surrounding code.\n' +
+        '    - **DO NOT** use ellipses (...) or placeholders like `// ... rest of code ...` or `{/* ... rest of your JSX ... */}`. You MUST return the complete, runnable file content.\n' +
+        '    - **ONLY** modify the lines necessary to correct the error.\n' +
+        '    Enclose the **COMPLETE** fixed code within a single code block starting with ```language (e.g., ```javascript) and ending with ```.\n\n' +
+        '## RESPONSE FORMAT REMINDER ##\n' +
+        'Explanation first, then the **COMPLETE** fixed code block. Failure to provide the full code will break the user\'s application.';
 
-      if (llmToUse === 'claude' && profile.claude_api_key) {
-        apiKey = profile.claude_api_key;
-        apiUrl = 'https://api.anthropic.com/v1/messages';
-        headers['x-api-key'] = apiKey;
-        headers['anthropic-version'] = '2023-06-01';
-        headers['anthropic-dangerous-direct-browser-access'] = 'true';
-        requestBody = {
-          model: "claude-3-5-sonnet-20240620",
-          max_tokens: 2048,
-          messages: [{ role: "user", content: promptContent }]
-        };
-      } else if (llmToUse === 'gemini' && profile.gemini_api_key) {
-        apiKey = profile.gemini_api_key;
-        apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-latest:generateContent?key=${apiKey}`;
-        requestBody = {
-          contents: [{ parts: [{ text: promptContent }] }]
-        };
-      } else if (llmToUse === 'custom' && profile.user_selected_modal_name && profile.user_selected_modal_api) {
-         // Custom model selected - Prepare for informative error, no API call
-         isCustomModel = true;
-         apiKey = profile.user_selected_modal_api; // Store key maybe useful later
-         console.log(`Custom model selected: ${profile.user_selected_modal_name}. API calls not implemented.`);
-      } else {
-        // Handle cases where default is set but key is missing or default is null
-        throw new Error('Default LLM not set, API key missing, or provider not supported.');
+      switch (llmProvider) {
+        case 'Anthropic':
+            apiUrl = 'https://api.anthropic.com/v1/messages';
+            headers['x-api-key'] = apiKey;
+            headers['anthropic-version'] = '2023-06-01';
+            // Required for direct browser access to Anthropic API
+            headers['anthropic-dangerous-direct-browser-access'] = 'true'; 
+            requestBody = {
+              // Consider making model configurable in settings later?
+              model: "claude-3-5-sonnet-20240620", 
+              max_tokens: 2048,
+              messages: [{ role: "user", content: promptContent }]
+            };
+            break;
+        case 'Google':
+             // Assuming Gemini 1.5 Pro - make configurable later?
+            apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-latest:generateContent?key=${apiKey}`;
+            requestBody = {
+              contents: [{ parts: [{ text: promptContent }] }]
+              // Add generationConfig if needed (temperature, max_tokens etc)
+              // generationConfig: { temperature: 0.7, maxOutputTokens: 2048 }
+            };
+            break;
+        case 'OpenAI':
+            apiUrl = 'https://api.openai.com/v1/chat/completions';
+            headers['Authorization'] = `Bearer ${apiKey}`;
+            requestBody = {
+                // Assuming a default model - make configurable later?
+                model: "gpt-4o", 
+                messages: [{ role: "user", content: promptContent }],
+                max_tokens: 2048
+            };
+            break;
+        case 'Azure OpenAI':
+            if (!defaultLlmConfig.api_endpoint) {
+                throw new Error('API Endpoint is missing for Azure OpenAI configuration.');
+            }
+            apiUrl = defaultLlmConfig.api_endpoint; // Endpoint includes deployment name usually
+            headers['api-key'] = apiKey; // Azure uses 'api-key' header
+            requestBody = {
+                // Azure request body structure (example - check specific deployment)
+                messages: [{ role: "user", content: promptContent }],
+                max_tokens: 2048
+            };
+            break;
+        case 'Custom':
+            if (!defaultLlmConfig.api_endpoint) {
+                throw new Error('API Endpoint is missing for Custom configuration.');
+            }
+            apiUrl = defaultLlmConfig.api_endpoint;
+            // Assuming a generic Bearer token for custom, might need adjustment
+            headers['Authorization'] = `Bearer ${apiKey}`;
+             // Assuming a generic request body, might need adjustment
+            requestBody = {
+                model: llmModelName, // Pass model name
+                messages: [{ role: "user", content: promptContent }],
+                max_tokens: 2048
+            };
+             console.log(`Using Custom provider: ${llmModelName} at ${apiUrl}`);
+            break;
+        default:
+            // Should not happen due to DB constraints, but good to have
+            throw new Error(`Unsupported LLM provider type: ${llmProvider}`);
       }
 
-      // 3. Make the API call *unless* it's an unimplemented custom model
+      // 3. Make the API call
+      console.log(`Calling ${llmProvider} API (${llmModelName}) at ${apiUrl}`);
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: headers,
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!response.ok) {
+        let errorBodyText = 'Unknown API error';
+        try {
+             errorBodyText = await response.text(); // Try to get more detail
+        } catch (e) {/* Ignore parsing error */} 
+        throw new Error(`API Error (${response.status} ${response.statusText}): ${errorBodyText}`);
+      }
+
+      const data = await response.json();
+
+      // 4. Parse the response (Provider-specific) - IMPROVED PARSING
+      let fullResponseText = ''; // Store the full text response
       let explanationText = 'Could not parse explanation.';
       let fixedCodeBlock = 'Could not parse fixed code.';
+      let rawCodeBlockMatch = null; // Store the full match including ``` markers
 
-      if (isCustomModel) {
-          // Set specific error for custom models
-          throw new Error(`Fixes for custom model '${llmProvider}' are not yet implemented.`);
-      } else {
-          // Proceed with the API call for Claude or Gemini
-          console.log(`Calling ${llmToUse} API`);
-          const response = await fetch(apiUrl, {
-            method: 'POST',
-            headers: headers,
-            body: JSON.stringify(requestBody),
-          });
+      try {
+        // --- Get full text from provider ---
+        if (llmProvider === 'Anthropic') {
+            if (data.content && data.content.length > 0 && data.content[0].type === 'text') {
+                fullResponseText = data.content[0].text;
+            }
+        } else if (llmProvider === 'Google') {
+            if (data.candidates && data.candidates.length > 0 && data.candidates[0].content?.parts?.length > 0) {
+                fullResponseText = data.candidates[0].content.parts[0].text;
+            }
+        } else if (llmProvider === 'OpenAI' || llmProvider === 'Azure OpenAI' || llmProvider === 'Custom') {
+            if (data.choices && data.choices.length > 0 && data.choices[0].message?.content) {
+                fullResponseText = data.choices[0].message.content;
+            }
+        }
 
-          if (!response.ok) {
-            const errorBody = await response.text();
-            throw new Error(`API request failed: ${response.status} ${response.statusText} - ${errorBody}`);
-          }
+        // --- Extract Code Block and Explanation ---
+        if (fullResponseText) {
+            // Find the code block (match includes the ``` markers)
+            // Corrected Regex: Match ``` optionally followed by language name, newline, content, newline, ```
+            const codeBlockRegex = /(\`\`\`[a-zA-Z]*\n[\s\S]*?\n\`\`\`)/;
+            const codeMatch = fullResponseText.match(codeBlockRegex);
+            if (codeMatch && codeMatch[1]) {
+                rawCodeBlockMatch = codeMatch[1]; // Store the full matched block
+                // Extract the code content *inside* the markers
+                // Corrected Regex: Match inside ```[language]\n ... \n```
+                const innerCodeRegex = /\`\`\`[a-zA-Z]*\n([\s\S]*?)\n\`\`\`/;
+                const innerCodeMatch = rawCodeBlockMatch.match(innerCodeRegex);
+                fixedCodeBlock = innerCodeMatch && innerCodeMatch[1] ? innerCodeMatch[1].trim() : 'Could not parse code content.';
+                
+                // Explanation is the full text minus the code block
+                explanationText = fullResponseText.replace(rawCodeBlockMatch, '').trim();
+            } else {
+                // No code block found, assume entire response is explanation
+                explanationText = fullResponseText;
+                fixedCodeBlock = 'No code block found in response.';
+            }
+        } else {
+             explanationText = `Could not extract text response from ${llmProvider}.`;
+             fixedCodeBlock = `Could not extract text response from ${llmProvider}.`;
+        }
 
-          const result = await response.json();
-          console.log(`${llmToUse} API Result:`, result);
-
-          // 4. Parse the LLM response
-          try { // Add try-catch for parsing, as LLM output can vary
-              if (llmToUse === 'claude' && result.content?.[0]?.text) {
-                const rawText = result.content[0].text;
-                const codeBlockMatch = rawText.match(/```(?:[a-zA-Z]*\n)?([\s\S]*?)```/);
-                if (codeBlockMatch?.[1]) {
-                  fixedCodeBlock = codeBlockMatch[1].trim();
-                  explanationText = rawText.substring(0, codeBlockMatch.index ?? 0).trim();
-                } else {
-                  explanationText = rawText; // Assume whole response is explanation
-                }
-              } else if (llmToUse === 'gemini' && result.candidates?.[0]?.content?.parts?.[0]?.text) {
-                const rawText = result.candidates[0].content.parts[0].text;
-                const codeBlockMatch = rawText.match(/```(?:[a-zA-Z]*\n)?([\s\S]*?)```/);
-                if (codeBlockMatch?.[1]) {
-                  fixedCodeBlock = codeBlockMatch[1].trim();
-                  explanationText = rawText.substring(0, codeBlockMatch.index ?? 0).trim();
-                } else {
-                  explanationText = rawText; // Assume whole response is explanation
-                }
-              }
-          } catch (parseError: any) {
-              console.error("Error parsing LLM response:", parseError);
-              setError(`Failed to parse LLM response: ${parseError.message}`);
-              // Keep the default placeholder messages for explanation/code
-          }
+      } catch (parseError: any) {
+          console.error("Error parsing LLM response:", parseError);
+          setError(`Failed to parse response from ${llmProvider}: ${parseError.message}`);
+          // Keep default 'Could not parse...' messages if specific parsing failed
+          explanationText = explanationText || 'Error during parsing.';
+          fixedCodeBlock = fixedCodeBlock || 'Error during parsing.';
       }
 
-      // Set state only if not a custom model (as it would have thrown error)
       setExplanation(explanationText);
       setFixedCode(fixedCodeBlock);
 
-      // 5. Save fix details (Skip if custom model error occurred before this point)
-       try {
-            const { error: insertError } = await supabase.from('fixes').insert({
-                user_id: session.user.id,
-                error_message: errorMessage,
-                errant_code: errantCode, // Store original code
-                fixed_code: fixedCodeBlock,
-                llm_explanation: explanationText,
-                llm_provider: llmProvider, // Now correctly uses custom name if set
-                // file_path: null // Add later if file path parsing implemented
-            });
-            if (insertError) {
-                console.error("Error saving fix to database:", insertError);
-            } else {
-                console.log("Fix details saved to database.");
-                setFixSavedCounter(prev => prev + 1); // <-- Increment counter on success
-            }
-       } catch (dbError: any) {
-            console.error("Error during database insert:", dbError);
-       }
+      // 5. Save the results to the database
+      const { error: saveError } = await supabase.from('fixes').insert({
+        user_id: session.user.id,
+        error_message: errorMessage,
+        errant_code: errantCode,
+        fixed_code: fixedCodeBlock,
+        llm_explanation: explanationText,
+        llm_provider: llmProvider, // Keep original provider string
+        llm_configuration_id: defaultLlmConfig.id // Link to the config used
+      });
 
+      if (saveError) {
+        console.error('Failed to save fix details:', saveError);
+        // Display the actual error message from Supabase
+        const detailedMessage = saveError.message || 'Unknown database error during history save';
+        setError(`Code fixed, but failed to save history: ${detailedMessage}`);
+      } else {
+          // Increment counter to trigger potential refresh in Analytics
+          setFixSavedCounter(prev => prev + 1); 
+      }
 
     } catch (err: any) {
       console.error('handleFixCode Error:', err);
-      setError(err.message || 'An unknown error occurred.');
+      setError(err.message || 'An unexpected error occurred');
     } finally {
       setLoading(false);
     }
@@ -326,7 +495,7 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
         <div className="box form-group"> 
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
             <label htmlFor="errorMessageInput" style={{ marginBottom: 0 }}>Error Message / File Path</label>
-            {/* Add Picker Button */} 
+            {/* Add Picker Button - Renamed */}
             <button 
               id="pickElementButton"
               className="button" 
@@ -334,7 +503,7 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
               disabled={isPickingElement} 
               style={{ padding: '4px 8px', fontSize: '0.8em'}} // Smaller button
             >
-              {isPickingElement ? 'Picking...' : 'Pick Element'} 
+              {isPickingElement ? 'Picking...' : 'Select Error Message'} 
             </button>
           </div>
           <input 
@@ -345,6 +514,32 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
             placeholder="Paste error message here or use Pick Element" // Updated placeholder
             disabled={loading} 
           /> 
+        </div> 
+ 
+        {/* Plan Input Area (Moved) */}
+        <div className="box form-group"> 
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+            <label htmlFor="errorFixPlanInput" style={{ marginBottom: 0 }}>The Plan</label>
+            {/* Add Picker Button for Plan - Renamed */}
+            <button 
+              id="pickPlanElementButton"
+              className="button" 
+              onClick={handlePickPlanElementClick} 
+              disabled={isPickingPlanElement} 
+              style={{ padding: '4px 8px', fontSize: '0.8em'}}
+            >
+              {isPickingPlanElement ? 'Picking...' : 'Select The Plan Text'} 
+            </button>
+          </div>
+          <textarea 
+            id="errorFixPlanInput" 
+            className="textarea"  
+            value={errorFixPlan}  
+            onChange={(e) => setErrorFixPlan(e.target.value)}  
+            placeholder="Describe or pick the plan/steps to fix the error."
+            rows={3} // Shorter text area for plan
+            disabled={loading} 
+          ></textarea> 
         </div> 
  
         {/* Errant Code Input Area */} 
@@ -394,15 +589,18 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
             )} 
             {fixedCode && ( 
               <div style={{ marginTop: explanation ? '16px' : '0' }}> 
-                <h2>Fixed Code</h2> 
+                {/* Flex container for Title and Button */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <h2>Fixed Code</h2> 
+                  <button  
+                    className="button"  
+                    style={{ padding: '4px 8px', fontSize: '0.8em'}} // Smaller button, adjust as needed
+                    onClick={handleCopyCode} 
+                  > 
+                    {copyButtonText} 
+                  </button> 
+                </div>
                 <pre className='result-code' style={{ whiteSpace: 'pre-wrap', background: '#1a1a1a', padding: '10px', borderRadius: '4px' }}>{fixedCode}</pre> 
-                <button  
-                  className="button"  
-                  style={{ marginTop: '10px' }}  
-                  onClick={handleCopyCode} 
-                > 
-                  {copyButtonText} 
-                </button> 
               </div> 
             )} 
           </div> 
