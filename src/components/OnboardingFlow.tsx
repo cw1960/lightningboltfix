@@ -202,7 +202,7 @@ const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ session, onOnboardingCo
               {/*<li>Use the \"Pick Element\" button to select the error message on the page, or paste it manually.</li>*/}
               <li>Select text containing the error message on the page.</li>
               <li>Click the "Capture Selection" button in the side panel.</li>
-              <li>Manually copy the full code from the relevant file and paste it into the 'Paste Entire Errant Code Here' box.</li>
+              <li>Manually copy the full code from the relevant file and paste it into the 'Errant Code Schema' box.</li>
               <li>Click "Fix Code" to get an AI-powered explanation and solution using your configured default LLM.</li>
               <li>Copy the fixed code and apply it to your project.</li>
             </ol>

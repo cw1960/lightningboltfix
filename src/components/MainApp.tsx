@@ -236,25 +236,29 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
       let requestBody: any = {};
       let headers: HeadersInit = { 'Content-Type': 'application/json' };
 
-      // Construct the shared prompt content - Include Plan
+      // Construct the shared prompt content - **ULTRA EXPLICIT for FULL FILE output**
       const promptContent =
         'Error Message:\n' + errorMessage + '\n\n' +
         'Plan to Fix the Error:\n' + errorFixPlan + '\n\n' +
         'Errant Code (Full File Content):\n' +
         '```\n' + errantCode + '\n```\n\n' +
-        '## CRITICAL TASK ##\n' +
-        'You MUST fix the errant code provided above, **strictly following the Plan provided**. Your response MUST strictly follow this format:\n\n' +
+        '## CRITICAL TASK & STRICT REQUIREMENTS ##\n' +
+        'Your ONLY goal is to return the **COMPLETE, UNMODIFIED ORIGINAL CODE PLUS THE NECESSARY FIX** based on the Plan and Error Message. You MUST fix the errant code provided above, strictly following the Plan provided. Your response MUST strictly follow this format:\n\n' +
         '1.  **Explanation:**\n' +
-        '    A concise explanation of the error and the fix applied (informed by the Plan).\n\n' +
-        '2.  **Fixed Code (Complete File):**\n' +
-        '    This section MUST contain the **ENTIRE, UNMODIFIED ORIGINAL CODE PLUS THE FIX**. It is ESSENTIAL that you return the *full file content* as it needs to replace the original file directly. \n' +
-        '    - **DO NOT** return only the changed snippet or function.\n' +
-        '    - **DO NOT** omit any imports, comments, or surrounding code.\n' +
-        '    - **DO NOT** use ellipses (...) or placeholders like `// ... rest of code ...` or `{/* ... rest of your JSX ... */}`. You MUST return the complete, runnable file content.\n' +
-        '    - **ONLY** modify the lines necessary to correct the error.\n' +
-        '    Enclose the **COMPLETE** fixed code within a single code block starting with ```language (e.g., ```javascript) and ending with ```.\n\n' +
-        '## RESPONSE FORMAT REMINDER ##\n' +
-        'Explanation first, then the **COMPLETE** fixed code block. Failure to provide the full code will break the user\'s application.';
+        '    A concise explanation of the error and the fix applied (informed by the Plan).\n' +
+        '    **CRITICAL VERIFICATION CONFIRMATION:** You MUST include the phrase "Verification complete: Full original code preserved." in this explanation section to confirm you have performed the check described below.\n\n' +
+        '2.  **Fixed Code (COMPLETE and UNALTERED Original + Fix):**\n' +
+        '    This section **MUST** contain the **ENTIRE, COMPLETE, UNALTERED ORIGINAL CODE PLUS THE FIX**. It is **NON-NEGOTIABLE** that you return the *full file content* as it needs to replace the original file directly. Any deviation will break the user\'s application.\n' +
+        '    - **VERIFY:** Before outputting the code block, perform a mental line-by-line comparison between the original "Errant Code" input and your generated "Fixed Code" output. Ensure that *every single line* from the original code is present in the output, UNLESS it was explicitly modified as part of the fix according to the Plan. Confirm that you have NOT commented out any previously active code or added placeholders like `...` or `// existing code`. This verification is MANDATORY.\n' +
+        '    - **ABSOLUTELY NO** returning only the changed snippet or function.\n' +
+        '    - **ABSOLUTELY NO** omitting *any* part of the original code (imports, comments, functions, structure, whitespace etc.).\n' +
+        '    - **ABSOLUTELY NO** using ellipses (`...`) or placeholders (e.g., `// ... rest of code ...`, `{/* ... */}`).\n' +
+        '    - **ABSOLUTELY NO** summarizing, truncating, or commenting out existing, functional code.\n' +
+        '    - **ONLY** modify the lines necessary to correct the error according to the Plan.\n' +
+        '    - The code block below **MUST** represent the **COMPLETE AND RUNNABLE** file content.\n' +
+        '    Enclose the **COMPLETE, ENTIRE, and VERIFIED** fixed code within a single markdown code block starting with ```language (e.g., ```javascript) and ending with ```.\n\n' +
+        '## FINAL CHECK & CONSEQUENCE ##\n' +
+        'Failure to provide the COMPLETE and UNALTERED original code (plus the fix) in the specified format, OR failure to include the verification confirmation phrase in the explanation, will render the output useless and break the application. Return ONLY the explanation (including the confirmation phrase) and the **COMPLETE** fixed code block.\n';
 
       switch (llmProvider) {
         case 'Anthropic':
@@ -462,7 +466,14 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
           />
         </div>
         {/* Consider moving Fix New Error button inside the Fix tab later */}
-        <button className="button" onClick={handleReset} style={{ backgroundColor: '#555' }}>
+        <button
+          className="button"
+          onClick={handleReset}
+          style={{
+            // Change background to green if fix is complete and no error/loading
+            backgroundColor: (fixedCode && !loading && !error) ? '#28a745' : '#555',
+          }}
+        >
           Fix New Error
         </button>
       </div>
@@ -494,7 +505,7 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
         {/* Error Message Input Area */} 
         <div className="box form-group"> 
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-            <label htmlFor="errorMessageInput" style={{ marginBottom: 0 }}>Error Message / File Path</label>
+            <label htmlFor="errorMessageInput" style={{ marginBottom: 0 }}>Error Message</label>
             {/* Add Picker Button - Renamed */}
             <button 
               id="pickElementButton"
@@ -528,7 +539,7 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
               disabled={isPickingPlanElement} 
               style={{ padding: '4px 8px', fontSize: '0.8em'}}
             >
-              {isPickingPlanElement ? 'Picking...' : 'Select The Plan Text'} 
+              {isPickingPlanElement ? 'Picking...' : 'Select "The Plan" Text'} 
             </button>
           </div>
           <textarea 
@@ -545,7 +556,7 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
         {/* Errant Code Input Area */} 
         <div className="box form-group"> 
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-            <label htmlFor="errantCodeInput" style={{ marginBottom: 0 }}>Paste Entire Errant Code Here</label>
+            <label htmlFor="errantCodeInput" style={{ marginBottom: 0 }}>Errant Code Schema</label>
           </div>
           <textarea 
             id="errantCodeInput" 
