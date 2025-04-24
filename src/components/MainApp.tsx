@@ -39,6 +39,7 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
   const [isPickingElement, setIsPickingElement] = useState(false); // State for error picker mode
   const [errorFixPlan, setErrorFixPlan] = useState(''); // <-- Add state for the plan
   const [isPickingPlanElement, setIsPickingPlanElement] = useState(false); // <-- Add state for plan picker mode
+  const [isPickingSchema, setIsPickingSchema] = useState(false); // <-- Add state for schema selector mode
 
   const FREE_FIX_LIMIT = 10;
 
@@ -62,6 +63,16 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
         sendResponse({ status: "PLAN_ELEMENT_PICKED received" });
         return true;
       }
+
+      // --- Add handler for Schema Selected --- START ---
+      if (message.type === 'SCHEMA_SELECTED') {
+        console.log("Received selected schema text:", message.payload);
+        setErrantCode(message.payload); // <-- Set errant code state
+        setIsPickingSchema(false); // <-- Turn off schema selector mode
+        sendResponse({ status: "SCHEMA_SELECTED received" });
+        return true;
+      }
+      // --- Add handler for Schema Selected --- END ---
 
       // If message is not handled, return false or undefined
       // to avoid keeping the channel open unnecessarily.
@@ -157,6 +168,32 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
       setIsPickingPlanElement(false); // Reset state on error
     }
   };
+
+  // --- Handler for the NEW Schema Selector Button --- START ---
+  const handleSelectSchemaClick = async () => {
+      setIsPickingSchema(true);
+      setError(null);
+      let tabId: number | undefined = undefined;
+      try {
+          const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+          tabId = activeTab?.id;
+          if (!tabId) throw new Error('Could not find active tab.');
+
+          const isReady = await checkContentScriptReady(tabId);
+          if (!isReady) {
+              throw new Error("Content script not ready on the active page. Please reload the page or try again.");
+          }
+
+          console.log('Sending START_SCHEMA_SELECTION to tab:', tabId);
+          // Send a distinct message type for schema selection
+          await chrome.tabs.sendMessage(tabId, { type: 'START_SCHEMA_SELECTION' });
+      } catch (err: any) {
+          console.error("Error starting schema selection:", err);
+          setError(`Failed to start schema selection: ${err.message}`);
+          setIsPickingSchema(false); // Reset state on error
+      }
+  };
+  // --- Handler for the NEW Schema Selector Button --- END ---
 
   // --- Handle Fix Code Logic ---
   const handleFixCode = async () => {
@@ -557,6 +594,16 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
         <div className="box form-group"> 
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
             <label htmlFor="errantCodeInput" style={{ marginBottom: 0 }}>Errant Code Schema</label>
+            {/* Add NEW Schema Selector Button */}
+            <button
+              id="selectSchemaButton"
+              className="button"
+              onClick={handleSelectSchemaClick}
+              disabled={isPickingSchema}
+              style={{ padding: '4px 8px', fontSize: '0.8em'}}
+            >
+              {isPickingSchema ? 'Selecting...' : 'Select Code Schema'}
+            </button>
           </div>
           <textarea 
             id="errantCodeInput" 
