@@ -28,7 +28,46 @@ try {
 */ // Comment out ExtPay Block End
 // --- End ExtPay Initialization ---
 
-console.log('Background service worker started (after ExtPay init attempt).');
+console.log('Background service worker started.');
+
+// --- Constants ---
+const TARGET_URL_PREFIX = 'https://bolt.new/';
+const SIDEPANEL_PATH = 'sidepanel.html';
+
+// --- Helper Function to Update Action/SidePanel State ---
+async function updateActionAndSidePanelState(tabId, url) {
+    if (!url) {
+        // Attempt to get URL if not provided
+        try {
+            const tab = await chrome.tabs.get(tabId);
+            url = tab.url;
+        } catch (error) {
+            console.warn(`Background: Could not get tab info for ${tabId}:`, error);
+            url = undefined; // Ensure url is undefined if tab fetch fails
+        }
+    }
+
+    if (url && url.startsWith(TARGET_URL_PREFIX)) {
+        console.log(`Background: Enabling action and side panel for tab ${tabId} (URL: ${url})`);
+        // Enable the action icon
+        await chrome.action.enable(tabId);
+        // Enable the side panel for this tab
+        await chrome.sidePanel.setOptions({
+            tabId: tabId,
+            path: SIDEPANEL_PATH,
+            enabled: true
+        });
+    } else {
+        console.log(`Background: Disabling action and side panel for tab ${tabId} (URL: ${url || 'N/A'})`);
+        // Disable the action icon
+        await chrome.action.disable(tabId);
+        // Disable the side panel for this tab
+        await chrome.sidePanel.setOptions({
+            tabId: tabId,
+            enabled: false
+        });
+    }
+}
 
 // We no longer use an in-memory Set
 // const readyTabs = new Set();
@@ -159,6 +198,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return false;
     }
   }
+
+  // If no handler matched, return false or undefined
+  console.warn("Background: Unhandled message type:", message?.type);
+  return false; 
 });
 
 // Function to capture a screenshot of the current tab
@@ -263,17 +306,60 @@ function calculateTotal(items) {
   }
 }
 
-// Open the side panel when the extension icon is clicked
-chrome.action.onClicked.addListener((tab) => {
-  try {
-    if (tab && tab.id) {
-      chrome.sidePanel.open({ tabId: tab.id });
-    } else {
-      console.error('No valid tab to open side panel on');
+// --- Listen for Tab Updates ---
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+    // Ensure the tab is fully loaded and has a URL
+    if (changeInfo.status === 'complete' && tab.url) {
+        console.log(`Background: Tab ${tabId} updated. Status: ${changeInfo.status}, URL: ${tab.url}`);
+        await updateActionAndSidePanelState(tabId, tab.url);
     }
-  } catch (error) {
-    console.error('Error opening side panel:', error);
-  }
+});
+
+// --- Listen for Tab Activation ---
+chrome.tabs.onActivated.addListener(async (activeInfo) => {
+    console.log(`Background: Tab ${activeInfo.tabId} activated.`);
+    // Get the full tab details to check the URL
+    try {
+        const tab = await chrome.tabs.get(activeInfo.tabId);
+        await updateActionAndSidePanelState(activeInfo.tabId, tab.url);
+    } catch (error) {
+        console.error(`Background: Error getting details for activated tab ${activeInfo.tabId}:`, error);
+        // Disable if we can't get tab info
+        await updateActionAndSidePanelState(activeInfo.tabId, undefined); 
+    }
+});
+
+// --- Initial State Check on Startup ---
+chrome.runtime.onStartup.addListener(async () => {
+    console.log("Background: onStartup event fired.");
+    try {
+        const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tabs.length > 0 && tabs[0].id) {
+            console.log(`Background: Checking initial active tab ${tabs[0].id}`);
+            await updateActionAndSidePanelState(tabs[0].id, tabs[0].url);
+        } else {
+            console.log("Background: No active tab found on startup.");
+        }
+    } catch (error) {
+        console.error("Background: Error checking initial active tab:", error);
+    }
+});
+
+// Also check initial state when the extension is installed/updated
+chrome.runtime.onInstalled.addListener(async (details) => {
+    console.log(`Background: onInstalled event fired. Reason: ${details.reason}`);
+    // Useful for setting initial state or migrations
+    try {
+        const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tabs.length > 0 && tabs[0].id) {
+            console.log(`Background: Checking initial active tab ${tabs[0].id} after install/update.`);
+            await updateActionAndSidePanelState(tabs[0].id, tabs[0].url);
+        } else {
+            console.log("Background: No active tab found on install/update.");
+        }
+    } catch (error) {
+        console.error("Background: Error checking initial active tab after install/update:", error);
+    }
 });
 
 // Clean up storage when tabs are closed
