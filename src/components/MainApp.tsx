@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
 import type { Session } from '@supabase/supabase-js';
-import ExtPay from 'extpay'; // <-- Import ExtPay
+// import ExtPay from 'extpay'; // <-- Comment out ExtPay import
 import SettingsTab from './SettingsTab'; // Import SettingsTab
 import AnalyticsTab from './AnalyticsTab'; // Import AnalyticsTab
 
 // Initialize ExtPay - Use your Extension ID
-const extpay = ExtPay('lightning-bolt-fix');
+// const extpay = ExtPay('lightning-bolt-fix'); // <-- Comment out ExtPay initialization
 
 // Define structure for a single LLM configuration row
 // Matches the llm_user_configurations table
@@ -39,7 +39,6 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
   const [isPickingElement, setIsPickingElement] = useState(false); // State for error picker mode
   const [errorFixPlan, setErrorFixPlan] = useState(''); // <-- Add state for the plan
   const [isPickingPlanElement, setIsPickingPlanElement] = useState(false); // <-- Add state for plan picker mode
-  const [isPickingSchema, setIsPickingSchema] = useState(false); // <-- Add state for schema selector mode
 
   const FREE_FIX_LIMIT = 10;
 
@@ -63,16 +62,6 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
         sendResponse({ status: "PLAN_ELEMENT_PICKED received" });
         return true;
       }
-
-      // --- Add handler for Schema Selected --- START ---
-      if (message.type === 'SCHEMA_SELECTED') {
-        console.log("Received selected schema text:", message.payload);
-        setErrantCode(message.payload); // <-- Set errant code state
-        setIsPickingSchema(false); // <-- Turn off schema selector mode
-        sendResponse({ status: "SCHEMA_SELECTED received" });
-        return true;
-      }
-      // --- Add handler for Schema Selected --- END ---
 
       // If message is not handled, return false or undefined
       // to avoid keeping the channel open unnecessarily.
@@ -169,32 +158,6 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
     }
   };
 
-  // --- Handler for the NEW Schema Selector Button --- START ---
-  const handleSelectSchemaClick = async () => {
-      setIsPickingSchema(true);
-      setError(null);
-      let tabId: number | undefined = undefined;
-      try {
-          const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-          tabId = activeTab?.id;
-          if (!tabId) throw new Error('Could not find active tab.');
-
-          const isReady = await checkContentScriptReady(tabId);
-          if (!isReady) {
-              throw new Error("Content script not ready on the active page. Please reload the page or try again.");
-          }
-
-          console.log('Sending START_SCHEMA_SELECTION to tab:', tabId);
-          // Send a distinct message type for schema selection
-          await chrome.tabs.sendMessage(tabId, { type: 'START_SCHEMA_SELECTION' });
-      } catch (err: any) {
-          console.error("Error starting schema selection:", err);
-          setError(`Failed to start schema selection: ${err.message}`);
-          setIsPickingSchema(false); // Reset state on error
-      }
-  };
-  // --- Handler for the NEW Schema Selector Button --- END ---
-
   // --- Handle Fix Code Logic ---
   const handleFixCode = async () => {
     setLoading(true);
@@ -208,12 +171,16 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
       // --- Payment & Free Fix Check (Keep this logic as is) --- 
       let canProceed = false;
       try {
+        /* // Comment out ExtPay check Start
         const extUser = await extpay.getUser();
         if (extUser.paid) {
             console.log("User is paid. Proceeding with fix.");
             canProceed = true;
         } else {
-            console.log("User is not paid. Checking free fixes...");
+        */ // Comment out ExtPay check End
+
+            // --- Start: Assume user is NOT paid (Free Tier Logic) ---
+            console.log("ExtPay Disabled: Assuming free tier. Checking free fixes...");
             // Fetch profile specifically for free fixes count
             const { data: freeFixProfile, error: freeFixError } = await supabase
               .from('profiles')
@@ -240,7 +207,11 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
             } else {
                  throw new Error(`Free fix limit (${FREE_FIX_LIMIT}/${FREE_FIX_LIMIT}) reached. Please upgrade via the Settings tab.`);
             }
+            // --- End: Assume user is NOT paid (Free Tier Logic) ---
+
+        /* // Comment out ExtPay check Else block Start
         }
+        */ // Comment out ExtPay check Else block End
       } catch (extPayCheckError: any) {
           console.error("Error during payment/free fix check:", extPayCheckError);
           throw extPayCheckError;
@@ -594,16 +565,6 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
         <div className="box form-group"> 
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
             <label htmlFor="errantCodeInput" style={{ marginBottom: 0 }}>Errant Code Schema</label>
-            {/* Add NEW Schema Selector Button */}
-            <button
-              id="selectSchemaButton"
-              className="button"
-              onClick={handleSelectSchemaClick}
-              disabled={isPickingSchema}
-              style={{ padding: '4px 8px', fontSize: '0.8em'}}
-            >
-              {isPickingSchema ? 'Selecting...' : 'Select Code Schema'}
-            </button>
           </div>
           <textarea 
             id="errantCodeInput" 

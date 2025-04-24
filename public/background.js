@@ -2,6 +2,7 @@
 // import ExtPay from 'extpay'; // Revert this
 
 // --- ExtPay Initialization ---
+/* // Comment out ExtPay Block Start
 try {
     // Use importScripts as recommended for MV3 service workers by ExtPay docs
     self.importScripts('ExtPay.js'); 
@@ -24,6 +25,7 @@ try {
 } catch (e) {
     console.error("ExtPay initialization failed:", e);
 }
+*/ // Comment out ExtPay Block End
 // --- End ExtPay Initialization ---
 
 console.log('Background service worker started (after ExtPay init attempt).');

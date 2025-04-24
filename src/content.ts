@@ -46,52 +46,48 @@ function stopPickingMode() {
 
 // --- Message Listener from Background/Popup ---
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    console.log("Content script received message:", message);
+    // Simplest possible logs first
+    console.log("Content script: Listener invoked.");
 
+    if (message) {
+        console.log("Content script: Message object exists.");
+        try {
+            const msgType = message.type;
+            console.log("Content script: Message type is:", msgType);
+        } catch (e) {
+            console.error("Content script: ERROR accessing message.type:", e);
+        }
+    } else {
+        console.log("Content script: Message object is null or undefined.");
+        return false; // Can't process if no message
+    }
+
+    // Keep original checks for now
     if (message.type === 'CHECK_CONTENT_SCRIPT_READY') {
-        console.log("Content script: Responding to readiness check.");
+        console.log("Content script: Matched CHECK_CONTENT_SCRIPT_READY");
         sendResponse({ ready: true });
         return true; // Keep channel open for async response
     }
-
     // --- Element Picking Logic ---
-    if (message.type === 'START_ELEMENT_PICKING') {
-        console.log('Content script: Received START_ELEMENT_PICKING');
+    else if (message.type === 'START_ELEMENT_PICKING') {
+        console.log("Content script: Matched START_ELEMENT_PICKING");
         startPickingMode('error'); // Use 'error' mode
         sendResponse({ status: "Error picking mode started" });
         return true; // Indicate async response needed
     } else if (message.type === 'START_PLAN_ELEMENT_PICKING') {
-        console.log('Content script: Received START_PLAN_ELEMENT_PICKING');
+        console.log("Content script: Matched START_PLAN_ELEMENT_PICKING");
         startPickingMode('plan'); // Use 'plan' mode
         sendResponse({ status: "Plan picking mode started" });
         return true;
     }
-    // --- Schema Selection Logic (Not involving picker mode) ---
-    else if (message.type === 'START_SCHEMA_SELECTION') {
-        console.log('Content script: Received START_SCHEMA_SELECTION');
-        try {
-            const codeContainer = document.querySelector<HTMLElement>('.cm-content');
-            if (codeContainer) {
-                const schemaText = codeContainer.textContent || '';
-                console.log('Content script: Found .cm-content, sending text back.');
-                chrome.runtime.sendMessage({ type: 'SCHEMA_SELECTED', payload: schemaText });
-                sendResponse({ status: "Schema selected successfully" });
-            } else {
-                console.warn('Content script: Could not find .cm-content element.');
-                chrome.runtime.sendMessage({ type: 'SCHEMA_SELECTED', payload: '', error: 'Could not find code container element (.cm-content)' });
-                sendResponse({ status: "Failed to find schema container" });
-            }
-        } catch (error) {
-            console.error('Content script: Error during schema selection:', error);
-            chrome.runtime.sendMessage({ type: 'SCHEMA_SELECTED', payload: '', error: 'An error occurred during schema selection.' });
-            sendResponse({ status: "Error during schema selection" });
-        }
-        return true; // Indicate async response needed
+    // --- Add final else block ---
+    else {
+        console.warn(`Content script: Message type '${message?.type}' did not match any known handlers.`);
     }
 
-    // If message wasn't handled, indicate it.
+    // If message wasn't handled by any block that returns true, this will run.
     // Returning false or undefined closes the message channel synchronously.
-    console.log("Content script: Message not handled by this listener.");
+    console.log("Content script: Message handler falling through (may indicate an unhandled message or error).");
     return false;
 });
 
