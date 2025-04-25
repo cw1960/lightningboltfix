@@ -473,7 +473,8 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
             style={{ width: '90px', height: '90px' }} // Apply size
           />
         </div>
-        {/* Consider moving Fix New Error button inside the Fix tab later */}
+        {/* --- Move Fix New Error button from header --- */}
+        {/* 
         <button
           className="button"
           onClick={handleReset}
@@ -484,6 +485,7 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
         >
           Fix New Error
         </button>
+        */}
       </div>
 
       {/* Tab Navigation */}
@@ -510,6 +512,26 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
 
       {/* Tab Content */} 
       <div id="fixTab" className={`tab-content ${activeTab === 'fix' ? 'active' : ''}`}> 
+        
+        {/* --- Add Fix New Error button inside Fix tab --- */}
+        {/* Show button only if results are present or loading/error occurred */}
+        {(fixedCode || explanation || loading || error) && (
+           <div style={{ marginBottom: '16px', textAlign: 'right' }}> {/* Align to right */} 
+             <button
+               className="button"
+               onClick={handleReset}
+               style={{
+                 // Adjust style as needed
+                 backgroundColor: (fixedCode && !loading && !error) ? '#28a745' : '#555',
+                 padding: '4px 8px', // Smaller padding
+                 fontSize: '0.9em'  // Slightly smaller font
+               }}
+             >
+               Fix New Error
+             </button>
+           </div>
+         )}
+
         {/* Error Message Input Area */} 
         <div className="box form-group"> 
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
