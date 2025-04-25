@@ -24,6 +24,7 @@ const extpay = ExtPay('lightning-bolt-fix'); // Uncomment ExtPay initialization
 
 interface SettingsTabProps {
   session: Session;
+  refreshTrigger: number; // Add refreshTrigger prop
 }
 
 // Define ExtPay user structure (simplified based on docs)
@@ -33,10 +34,14 @@ interface ExtPayUser {
     // Add other fields if needed (trialStartedAt, etc.)
 }
 
-const SettingsTab: React.FC<SettingsTabProps> = ({ session }) => {
+// Add the constant for the limit
+const FREE_FIX_LIMIT = 10;
+
+const SettingsTab: React.FC<SettingsTabProps> = ({ session, refreshTrigger }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [freeFixesUsed, setFreeFixesUsed] = useState<number>(0); // Add state for fix count
 
   // State for LLM configurations
   const [configurations, setConfigurations] = useState<LlmConfiguration[]>([]);
@@ -83,6 +88,8 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ session }) => {
   const fetchData = useCallback(async () => {
     setLoading(true);
     setError(null);
+    // Reset count before fetching
+    setFreeFixesUsed(0);
     try {
       // Fetch LLM Configurations
       const { data: configData, error: configError } = await supabase
@@ -111,15 +118,34 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ session }) => {
       setUserEmail(session.user.email ?? null); // Get email from session, fallback to null
       */ // --- Remove Mock ExtPay Status --- End
 
+      // --- Fetch Free Fix Count --- START ---
+      const { data: profileData, error: profileError } = await supabase
+          .from('profiles')
+          .select('free_fixes_used')
+          .eq('id', session.user.id)
+          .single<{ free_fixes_used: number }>();
+          
+      if (profileError) {
+          // Handle profile fetch error distinctly if needed, or combine errors
+          console.error("Error fetching profile for free fix count:", profileError);
+          // Optionally set a specific error or just let the general error handling catch it
+          // setError("Could not fetch free fix count.");
+          // Rethrow or handle based on desired UX
+          throw new Error(`Failed to load profile data: ${profileError.message}`);
+      }
+      setFreeFixesUsed(profileData?.free_fixes_used ?? 0);
+      // --- Fetch Free Fix Count --- END ---
+
     } catch (err: any) {
       console.error('Error fetching settings data:', err);
       setError(err.message || 'Failed to load settings data.');
       setConfigurations([]); // Ensure empty array on error
+      setFreeFixesUsed(0); // Reset on error
     } finally {
       setLoading(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session.user.id]); // Depend only on user ID
+  }, [session.user.id, refreshTrigger]); // Add refreshTrigger to dependency array
 
   // Fetch data on component mount
   useEffect(() => {
@@ -358,6 +384,12 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ session }) => {
                 {/* Display email from extPayUser */}
                 {isPaidUser && extPayUser?.email && <small> ({extPayUser.email})</small>}
             </p>
+            {/* Display free fix count if not a paid user */}
+            {!isPaidUser && (
+                <p style={{ fontSize: '0.9em', color: '#ccc' }}>
+                    Free Fixes Used: <strong>{freeFixesUsed} / {FREE_FIX_LIMIT}</strong>
+                </p>
+            )}
             {/* Uncomment original ExtPay button */}
             <button 
                 className="button"

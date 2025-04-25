@@ -205,7 +205,7 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
                 console.log("Free fix count incremented. Proceeding with fix.");
                 canProceed = true;
             } else {
-                 throw new Error(`Free fix limit (${FREE_FIX_LIMIT}/${FREE_FIX_LIMIT}) reached. Please upgrade via the Settings tab.`);
+                 throw new Error(`Free fix limit (${FREE_FIX_LIMIT}/${FREE_FIX_LIMIT}) reached. Please upgrade to the Premium plan via the Settings tab.`);
             }
             // --- End: Assume user is NOT paid (Free Tier Logic) ---
 
@@ -649,8 +649,8 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
       </div>
 
       <div id="settingsTab" className={`tab-content ${activeTab === 'settings' ? 'active' : ''}`}>
-        {/* Render SettingsTab, passing the session */}
-        <SettingsTab session={session} />
+        {/* Render SettingsTab, passing the session and refresh trigger */}
+        <SettingsTab session={session} refreshTrigger={fixSavedCounter} />
       </div>
 
       <div id="analyticsTab" className={`tab-content ${activeTab === 'analytics' ? 'active' : ''}`}>
