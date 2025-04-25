@@ -451,21 +451,8 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ session }) => {
                 {formError && <p className="error" style={{ color: '#f87171'}}>{formError}</p>}
                 
                 {/* Form fields */} 
-                {/* Model Name */}
-                <div className="form-group">
-                    <label htmlFor="formModelName">Model Name *</label>
-                    <input
-                        type="text"
-                        id="formModelName"
-                        className="input"
-                        placeholder="Unique name (e.g., Personal Claude)"
-                        value={formModelName}
-                        onChange={(e) => setFormModelName(e.target.value)}
-                        disabled={formIsSaving}
-                        required
-                    />
-                </div>
-                {/* Provider Type */}
+                
+                {/* Provider Type - Moved Up */}
                 <div className="form-group">
                     <label htmlFor="formProviderType">Provider Type *</label>
                     <select
@@ -481,6 +468,22 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ session }) => {
                         ))}
                     </select>
                 </div>
+
+                {/* Model Name - Moved Down */}
+                <div className="form-group">
+                    <label htmlFor="formModelName">Model Name *</label>
+                    <input
+                        type="text"
+                        id="formModelName"
+                        className="input"
+                        placeholder="Unique name (e.g., Personal Claude)"
+                        value={formModelName}
+                        onChange={(e) => setFormModelName(e.target.value)}
+                        disabled={formIsSaving}
+                        required
+                    />
+                </div>
+
                 {/* API Key */}
                 <div className="form-group">
                     <label htmlFor="formApiKey">API Key *</label>
