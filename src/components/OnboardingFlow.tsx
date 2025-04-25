@@ -178,8 +178,7 @@ const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ session, onOnboardingCo
               {/* Instructions specifically for Google */}
               {providerType === 'Google' && (
                 <p style={{ fontSize: '0.8em', color: '#aaa', marginTop: '5px' }}>
-                  Get your free API key from <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" style={{ color: '#60a5fa' }}>Google AI Studio</a>. 
-                  This allows the extension to use the free Gemini Flash model via your account.
+                  Get your free API key from Google API Studio. This allows the extension to use the free Gemini 2.0 Flash LLM. If you need help on how to get this API, please visit <a href="https://lightningboltfix.com/get-gemini-key" target="_blank" rel="noopener noreferrer" style={{ color: '#60a5fa' }}>https://lightningboltfix.com/get-gemini-key</a>
                 </p>
               )}
             </div>
