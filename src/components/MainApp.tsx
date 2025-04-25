@@ -283,8 +283,8 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
             };
             break;
         case 'Google':
-             // Assuming Gemini 1.5 Pro - make configurable later?
-            apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-latest:generateContent?key=${apiKey}`;
+             // Use Gemini 1.5 Flash (Free Tier)
+            apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`;
             requestBody = {
               contents: [{ parts: [{ text: promptContent }] }]
               // Add generationConfig if needed (temperature, max_tokens etc)

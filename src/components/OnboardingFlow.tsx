@@ -18,8 +18,9 @@ const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ session, onOnboardingCo
   const [error, setError] = useState<string | null>(null);
 
   // State for the single default LLM configuration
-  const [modelName, setModelName] = useState('');
-  const [providerType, setProviderType] = useState<ProviderType>('Anthropic'); // Default to Anthropic
+  // Default Model Name and Provider Type to Google Gemini Flash
+  const [modelName, setModelName] = useState('Google Gemini 2.0 Flash (Free Tier)');
+  const [providerType, setProviderType] = useState<ProviderType>('Google'); 
   const [apiKey, setApiKey] = useState('');
   const [apiEndpoint, setApiEndpoint] = useState(''); // Optional endpoint
 
@@ -162,12 +163,19 @@ const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ session, onOnboardingCo
                 type="password"
                 id="onboardingApiKey"
                 className="input"
-                placeholder="sk-... or AIzaSy... etc."
+                placeholder={providerType === 'Google' ? "Paste your Google AI Studio key here" : "sk-... or AIzaSy... etc."}
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
                 disabled={loading}
                 required
               />
+              {/* Instructions specifically for Google */}
+              {providerType === 'Google' && (
+                <p style={{ fontSize: '0.8em', color: '#aaa', marginTop: '5px' }}>
+                  Get your free API key from <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" style={{ color: '#60a5fa' }}>Google AI Studio</a>. 
+                  This allows the extension to use the free Gemini Flash model via your account.
+                </p>
+              )}
             </div>
 
             {/* API Endpoint (Conditional) */}

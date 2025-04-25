@@ -36,11 +36,13 @@ const SIDEPANEL_PATH = 'sidepanel.html';
 
 // --- Helper Function to Update Action/SidePanel State ---
 async function updateActionAndSidePanelState(tabId, url) {
+    console.log(`Background: updateActionAndSidePanelState called for tab ${tabId}. URL received: ${url}`);
     if (!url) {
         // Attempt to get URL if not provided
         try {
             const tab = await chrome.tabs.get(tabId);
             url = tab.url;
+            console.log(`Background: Fetched URL for tab ${tabId}: ${url}`);
         } catch (error) {
             console.warn(`Background: Could not get tab info for ${tabId}:`, error);
             url = undefined; // Ensure url is undefined if tab fetch fails
@@ -48,24 +50,36 @@ async function updateActionAndSidePanelState(tabId, url) {
     }
 
     if (url && url.startsWith(TARGET_URL_PREFIX)) {
-        console.log(`Background: Enabling action and side panel for tab ${tabId} (URL: ${url})`);
-        // Enable the action icon
-        await chrome.action.enable(tabId);
-        // Enable the side panel for this tab
-        await chrome.sidePanel.setOptions({
-            tabId: tabId,
-            path: SIDEPANEL_PATH,
-            enabled: true
-        });
+        console.log(`Background: MATCH FOUND for ${TARGET_URL_PREFIX}. Enabling action and side panel for tab ${tabId}.`);
+        try {
+            // Enable the action icon
+            await chrome.action.enable(tabId);
+            console.log(`Background: chrome.action.enable(${tabId}) successful.`);
+            // Enable the side panel for this tab
+            await chrome.sidePanel.setOptions({
+                tabId: tabId,
+                path: SIDEPANEL_PATH,
+                enabled: true
+            });
+            console.log(`Background: chrome.sidePanel.setOptions(${tabId}, { enabled: true }) successful.`);
+        } catch (error) {
+            console.error(`Background: Error ENABLING action/sidePanel for tab ${tabId}:`, error);
+        }
     } else {
-        console.log(`Background: Disabling action and side panel for tab ${tabId} (URL: ${url || 'N/A'})`);
-        // Disable the action icon
-        await chrome.action.disable(tabId);
-        // Disable the side panel for this tab
-        await chrome.sidePanel.setOptions({
-            tabId: tabId,
-            enabled: false
-        });
+        console.log(`Background: NO MATCH for ${TARGET_URL_PREFIX}. Disabling action and side panel for tab ${tabId}. URL: ${url || 'N/A'}`);
+        try {
+            // Disable the action icon
+            await chrome.action.disable(tabId);
+            console.log(`Background: chrome.action.disable(${tabId}) successful.`);
+            // Disable the side panel for this tab
+            await chrome.sidePanel.setOptions({
+                tabId: tabId,
+                enabled: false
+            });
+            console.log(`Background: chrome.sidePanel.setOptions(${tabId}, { enabled: false }) successful.`);
+        } catch (error) {
+            console.error(`Background: Error DISABLING action/sidePanel for tab ${tabId}:`, error);
+        }
     }
 }
 
@@ -305,6 +319,19 @@ function calculateTotal(items) {
     throw error;
   }
 }
+
+// --- Re-add onClicked listener to explicitly open the side panel ---
+// This listener will only fire if the action is enabled for the tab.
+chrome.action.onClicked.addListener((tab) => {
+  if (tab && tab.id) {
+    console.log(`Background: action.onClicked fired for enabled tab ${tab.id}. Attempting to open side panel.`);
+    chrome.sidePanel.open({ tabId: tab.id }).catch(error => {
+      console.error(`Background: Error explicitly opening side panel for tab ${tab.id}:`, error);
+    });
+  } else {
+    console.warn('Background: action.onClicked fired but no valid tab ID found.', tab);
+  }
+});
 
 // --- Listen for Tab Updates ---
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {

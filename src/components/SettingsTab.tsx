@@ -500,13 +500,20 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ session }) => {
                         type="password"
                         id="formApiKey"
                         className="input"
-                        placeholder={editingConfig ? "Enter new key to update" : "Enter API key"}
+                        placeholder={formProviderType === 'Google' ? "Paste Google AI Studio key" : (editingConfig ? "Enter new key to update" : "Enter API key")}
                         value={formApiKey}
                         onChange={(e) => setFormApiKey(e.target.value)}
                         disabled={formIsSaving}
                         required
                     />
                      {editingConfig && <small style={{ display: 'block', color: '#aaa', marginTop: '3px' }}>Leave blank to keep existing key.</small>}
+                     {/* Add instructions specifically for Google in the form */}
+                     {formProviderType === 'Google' && (
+                        <p style={{ fontSize: '0.8em', color: '#aaa', marginTop: '5px' }}>
+                        Get your free API key from <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" style={{ color: '#60a5fa' }}>Google AI Studio</a>. 
+                        This allows the extension to use the free Gemini Flash model via your account.
+                        </p>
+                     )}
                 </div>
                 {/* API Endpoint (Conditional) */}
                 {isEndpointRequiredForForm && (
