@@ -13,7 +13,7 @@ import AnalyticsTab from './AnalyticsTab'; // Import AnalyticsTab
 interface LlmConfiguration {
     id: string; // UUID
     profile_id: string; // UUID
-    provider_type: 'Anthropic' | 'Google' | 'OpenAI' | 'Azure OpenAI' | 'Custom';
+    provider_type: 'Anthropic' | 'Google' | 'OpenAI' | 'Azure OpenAI' | 'Custom' | 'Other';
     model_name: string;
     api_key: string;
     api_endpoint: string | null;
@@ -313,9 +313,9 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
                 max_tokens: 2048
             };
             break;
-        case 'Custom':
+        case 'Other':
             if (!defaultLlmConfig.api_endpoint) {
-                throw new Error('API Endpoint is missing for Custom configuration.');
+                throw new Error('API Endpoint is missing for Other configuration.');
             }
             apiUrl = defaultLlmConfig.api_endpoint;
             // Assuming a generic Bearer token for custom, might need adjustment
@@ -326,7 +326,7 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
                 messages: [{ role: "user", content: promptContent }],
                 max_tokens: 2048
             };
-             console.log(`Using Custom provider: ${llmModelName} at ${apiUrl}`);
+             console.log(`Using Other provider: ${llmModelName} at ${apiUrl}`);
             break;
         default:
             // Should not happen due to DB constraints, but good to have
@@ -367,7 +367,7 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
             if (data.candidates && data.candidates.length > 0 && data.candidates[0].content?.parts?.length > 0) {
                 fullResponseText = data.candidates[0].content.parts[0].text;
             }
-        } else if (llmProvider === 'OpenAI' || llmProvider === 'Azure OpenAI' || llmProvider === 'Custom') {
+        } else if (llmProvider === 'OpenAI' || llmProvider === 'Azure OpenAI' || llmProvider === 'Other') {
             if (data.choices && data.choices.length > 0 && data.choices[0].message?.content) {
                 fullResponseText = data.choices[0].message.content;
             }

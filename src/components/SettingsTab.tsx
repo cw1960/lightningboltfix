@@ -7,7 +7,7 @@ import type { Session } from '@supabase/supabase-js';
 interface LlmConfiguration {
     id: string;
     profile_id: string;
-    provider_type: 'Anthropic' | 'Google' | 'OpenAI' | 'Azure OpenAI' | 'Custom';
+    provider_type: 'Anthropic' | 'Google' | 'OpenAI' | 'Azure OpenAI' | 'Meta' | 'DeepSeek' | 'Cohere' | 'Mistral' | 'Alibaba' | 'Other';
     model_name: string;
     api_key: string;
     api_endpoint: string | null;
@@ -15,9 +15,9 @@ interface LlmConfiguration {
     created_at: string;
 }
 
-// Define allowed provider types (duplicate from Onboarding, consider sharing later)
+// Define allowed provider types (updated list)
 type ProviderType = LlmConfiguration['provider_type'];
-const providerTypes: ProviderType[] = ['Anthropic', 'Google', 'OpenAI', 'Azure OpenAI', 'Custom'];
+const providerTypes: ProviderType[] = ['Google', 'Anthropic', 'OpenAI', 'Meta', 'DeepSeek', 'Cohere', 'Mistral', 'Alibaba', 'Other'];
 
 // Initialize ExtPay - Use your Extension ID
 // const extpay = ExtPay('lightning-bolt-fix'); // Comment out ExtPay initialization
@@ -166,7 +166,8 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ session }) => {
     setError(null);
     setSuccessMessage(null);
 
-    const isEndpointNowRequired = formProviderType === 'Azure OpenAI' || formProviderType === 'Custom';
+    // Update endpoint requirement check
+    const isEndpointNowRequired = formProviderType === 'Azure OpenAI' || formProviderType === 'Other';
 
     // --- Validation ---
     if (!formModelName.trim()) {
@@ -191,7 +192,8 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ session }) => {
         return;
     }
     if (isEndpointNowRequired && !formApiEndpoint.trim()) {
-        setFormError('API Endpoint is required for Azure OpenAI and Custom providers.');
+        // Update error message
+        setFormError('API Endpoint is required for Azure OpenAI and Other providers.');
         setFormIsSaving(false);
         return;
     }
@@ -340,7 +342,7 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ session }) => {
 
   // --- Render Logic ---
   // const isPaidUser = extPayUser?.paid === true; // Use the new state variable instead
-  const isEndpointRequiredForForm = formProviderType === 'Azure OpenAI' || formProviderType === 'Custom';
+  const isEndpointRequiredForForm = formProviderType === 'Azure OpenAI' || formProviderType === 'Other';
 
   return (
     <div className="box">

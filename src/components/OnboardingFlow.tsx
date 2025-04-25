@@ -8,8 +8,8 @@ interface OnboardingFlowProps {
 }
 
 // Define allowed provider types
-type ProviderType = 'Anthropic' | 'Google' | 'OpenAI' | 'Azure OpenAI' | 'Custom';
-const providerTypes: ProviderType[] = ['Anthropic', 'Google', 'OpenAI', 'Azure OpenAI', 'Custom'];
+type ProviderType = 'Anthropic' | 'Google' | 'OpenAI' | 'Azure OpenAI' | 'Meta' | 'DeepSeek' | 'Cohere' | 'Mistral' | 'Alibaba' | 'Other';
+const providerTypes: ProviderType[] = ['Google', 'Anthropic', 'OpenAI', 'Meta', 'DeepSeek', 'Cohere', 'Mistral', 'Alibaba', 'Other'];
 
 const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ session, onOnboardingComplete }) => {
   // Step 1: Collect LLM Config, Step 2: Instructions
@@ -25,7 +25,7 @@ const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ session, onOnboardingCo
   const [apiEndpoint, setApiEndpoint] = useState(''); // Optional endpoint
 
   // Determine if endpoint is required based on provider type
-  const isEndpointRequired = providerType === 'Azure OpenAI' || providerType === 'Custom';
+  const isEndpointRequired = providerType === 'Azure OpenAI' || providerType === 'Other';
 
   // Total steps reduced to 2 (LLM Config, Instructions)
   const totalSteps = 2;
@@ -39,7 +39,7 @@ const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ session, onOnboardingCo
                 return;
             }
             if (isEndpointRequired && !apiEndpoint) {
-                setError('API Endpoint is required for Azure OpenAI and Custom provider types.');
+                setError('API Endpoint is required for Azure OpenAI and Other provider types.');
                 return;
             }
         }
@@ -122,24 +122,9 @@ const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ session, onOnboardingCo
         return (
           <div className="box">
             <h2>Configure Your Default LLM</h2>
-            <p>Provide details for the primary LLM service you want to use.</p>
+            <p>We STRONGLY recommend that you use Google Gemini 2.0 Flash (Free Tier), however, you may use any LLM model you wish by providing the details below. You may add other LLM models in the "Settings" tab later.</p>
 
-            {/* Model Name */}
-            <div className="form-group">
-              <label htmlFor="onboardingModelName">Model Name *</label>
-              <input
-                type="text"
-                id="onboardingModelName"
-                className="input"
-                placeholder="e.g., My Claude Sonnet, Personal Gemini"
-                value={modelName}
-                onChange={(e) => setModelName(e.target.value)}
-                disabled={loading}
-                required
-              />
-            </div>
-
-            {/* Provider Type */}
+            {/* Provider Type - Moved Up */}
             <div className="form-group">
                 <label htmlFor="onboardingProviderType">Provider Type *</label>
                 <select
@@ -154,6 +139,27 @@ const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ session, onOnboardingCo
                         <option key={type} value={type}>{type}</option>
                     ))}
                 </select>
+            </div>
+
+            {/* Model Name - Moved Down */}
+            <div className="form-group">
+              <label htmlFor="onboardingModelName">Model Name *</label>
+              <input
+                type="text"
+                id="onboardingModelName"
+                className="input"
+                placeholder={providerType === 'Google' ? "Defaults to Gemini 2.0 Flash" : "e.g., My Claude Sonnet"}
+                value={modelName}
+                onChange={(e) => setModelName(e.target.value)}
+                disabled={loading}
+                required
+              />
+              {/* Suggestion for Google */}
+              {providerType === 'Google' && !modelName && (
+                 <p style={{ fontSize: '0.8em', color: '#aaa', marginTop: '5px' }}>
+                    We recommend keeping the default name or similar for clarity.
+                 </p>
+              )}
             </div>
 
             {/* API Key */}
@@ -193,7 +199,7 @@ const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ session, onOnboardingCo
                     required={isEndpointRequired} // HTML5 validation
                 />
                 <p style={{ fontSize: '0.8em', color: '#aaa', marginTop: '5px' }}>
-                    Required for Azure OpenAI and Custom providers.
+                    Required for Azure OpenAI and Other providers.
                 </p>
                 </div>
             )}
@@ -226,7 +232,7 @@ const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ session, onOnboardingCo
 
   return (
     <div className="onboarding-container">
-       <img src="/icons/icon128.png" alt="Lightning Bolt Fix Logo" style={{ width: '90px', height: '90px', display: 'block', margin: '0 auto 20px auto' }} />
+       <img src="https://i.imgur.com/SZyvR08.png" alt="Lightning Bolt Fix Logo" style={{ width: '90px', height: '90px', display: 'block', margin: '0 auto 20px auto' }} />
       <h1>Welcome to Lightning Bolt Fix!</h1>
       <p>Let's get you set up.</p>
 
