@@ -564,7 +564,7 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
         {/* Errant Code Input Area */} 
         <div className="box form-group"> 
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-            <label htmlFor="errantCodeInput" style={{ marginBottom: 0 }}>Errant Code Schema</label>
+            <label htmlFor="errantCodeInput" style={{ marginBottom: 0 }}>Paste Full Code File Here</label>
           </div>
           <textarea 
             id="errantCodeInput" 

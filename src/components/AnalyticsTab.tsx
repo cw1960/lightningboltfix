@@ -23,9 +23,10 @@ interface AnalyticsTabProps {
 }
 
 // --- Constants for Estimated Savings --- 
-const ESTIMATED_BOLT_FIX_COST = 0.20; // $0.20
-const ESTIMATED_EXTENSION_FIX_COST = 0.07; // $0.07
-const ESTIMATED_SAVINGS_PER_FIX = ESTIMATED_BOLT_FIX_COST - ESTIMATED_EXTENSION_FIX_COST; // $0.13
+const ESTIMATED_BOLT_FIX_COST = 0.20; // Estimated cost using Bolt.new default (e.g., Anthropic)
+const ESTIMATED_EXTENSION_FIX_COST = 0; // Cost using this extension (e.g., free Gemini Flash)
+// Updated savings calculation to reflect the full cost difference
+const ESTIMATED_SAVINGS_PER_FIX = ESTIMATED_BOLT_FIX_COST - ESTIMATED_EXTENSION_FIX_COST; // Should now be $0.20
 
 const AnalyticsTab: React.FC<AnalyticsTabProps> = ({ session, refreshTrigger }) => {
   const [loading, setLoading] = useState(true);
@@ -123,7 +124,7 @@ const AnalyticsTab: React.FC<AnalyticsTabProps> = ({ session, refreshTrigger }) 
           <div style={{ marginBottom: '25px', paddingBottom: '15px', borderBottom: '1px solid #555' }}>
             <p style={{ fontSize: '1.1em', marginBottom: '5px' }}>Total Fixes Run: <strong>{fixCount}</strong></p>
             <p style={{ fontSize: '1.1em', marginBottom: '0' }}>Total Estimated Savings: <strong style={{ color: '#4ade80' }}>${totalEstimatedSavings}</strong></p> {/* Highlight savings */}
-            <small style={{ color: '#aaa' }}>(Based on estimated $${ESTIMATED_SAVINGS_PER_FIX.toFixed(2)} saved per fix compared to alternatives)</small>
+            <small style={{ color: '#aaa' }}>(Based on estimated $${ESTIMATED_SAVINGS_PER_FIX.toFixed(2)} saved per fix compared to paid alternatives like Bolt.new's default)</small>
           </div>
           
           {/* --- LLM Usage Section --- */} 
