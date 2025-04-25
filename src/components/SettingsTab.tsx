@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../supabaseClient';
 import type { Session } from '@supabase/supabase-js';
-// import ExtPay from 'extpay'; // Comment out ExtPay import
+import ExtPay from 'extpay'; // Uncomment ExtPay import
 
 // Import or define the LlmConfiguration interface (make sure it matches MainApp)
 interface LlmConfiguration {
@@ -20,20 +20,18 @@ type ProviderType = LlmConfiguration['provider_type'];
 const providerTypes: ProviderType[] = ['Google', 'Anthropic', 'OpenAI', 'Meta', 'DeepSeek', 'Cohere', 'Mistral', 'Alibaba', 'Other'];
 
 // Initialize ExtPay - Use your Extension ID
-// const extpay = ExtPay('lightning-bolt-fix'); // Comment out ExtPay initialization
+const extpay = ExtPay('lightning-bolt-fix'); // Uncomment ExtPay initialization
 
 interface SettingsTabProps {
   session: Session;
 }
 
-/* // Remove unused ExtPayUser interface
 // Define ExtPay user structure (simplified based on docs)
 interface ExtPayUser {
     paid: boolean;
     email: string | null;
     // Add other fields if needed (trialStartedAt, etc.)
 }
-*/
 
 const SettingsTab: React.FC<SettingsTabProps> = ({ session }) => {
   const [loading, setLoading] = useState(true);
@@ -44,9 +42,9 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ session }) => {
   const [configurations, setConfigurations] = useState<LlmConfiguration[]>([]);
   
   // State for ExtPay status
-  // const [extPayUser, setExtPayUser] = useState<ExtPayUser | null>(null); // Comment out ExtPay user state
-  const [isPaidUser, setIsPaidUser] = useState(false); // Use a simpler boolean state for paid status
-  const [userEmail, setUserEmail] = useState<string | null>(null); // Store email separately if needed
+  const [extPayUser, setExtPayUser] = useState<ExtPayUser | null>(null); // Uncomment ExtPay user state
+  // const [isPaidUser, setIsPaidUser] = useState(false); // Remove temporary boolean state
+  // const [userEmail, setUserEmail] = useState<string | null>(null); // Remove temporary email state
   
   // State for managing the Add/Edit form/modal
   const [showForm, setShowForm] = useState(false);
@@ -96,8 +94,7 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ session }) => {
       if (configError) throw new Error(`Failed to load LLM configurations: ${configError.message}`);
       setConfigurations(configData || []);
 
-      // Fetch ExtPay User Status
-      /* // Comment out ExtPay fetch block Start
+      // Fetch ExtPay User Status - Uncomment block
       try {
           const user = await extpay.getUser();
           console.log("ExtPay User:", user);
@@ -107,13 +104,12 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ session }) => {
           setError("Could not retrieve payment status. Please try again later.");
           setExtPayUser({ paid: false, email: null }); // Assume unpaid on error
       }
-      */ // Comment out ExtPay fetch block End
 
-      // --- Mock ExtPay Status --- Start
+      /* // --- Remove Mock ExtPay Status --- Start
       console.log("ExtPay Disabled: Assuming free user for settings display.");
       setIsPaidUser(false); // Assume free tier
       setUserEmail(session.user.email ?? null); // Get email from session, fallback to null
-      // --- Mock ExtPay Status --- End
+      */ // --- Remove Mock ExtPay Status --- End
 
     } catch (err: any) {
       console.error('Error fetching settings data:', err);
@@ -341,7 +337,7 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ session }) => {
   };
 
   // --- Render Logic ---
-  // const isPaidUser = extPayUser?.paid === true; // Use the new state variable instead
+  const isPaidUser = extPayUser?.paid === true; // Use the real ExtPay state variable again
   const isEndpointRequiredForForm = formProviderType === 'Azure OpenAI' || formProviderType === 'Other';
 
   return (
@@ -359,27 +355,17 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ session }) => {
             <h3>Account Status</h3>
             <p>
                 Status: <strong style={{ color: isPaidUser ? '#4ade80' : '#facc15' }}>{isPaidUser ? 'Premium User' : 'Free User'}</strong>
-                {/* Display email from session if needed */}
-                {isPaidUser && userEmail && <small> ({userEmail})</small>}
+                {/* Display email from extPayUser */}
+                {isPaidUser && extPayUser?.email && <small> ({extPayUser.email})</small>}
             </p>
-            {/* Disable or hide upgrade button when ExtPay is commented out */}
-            {/* 
+            {/* Uncomment original ExtPay button */}
             <button 
                 className="button"
-                onClick={() => extpay.openPaymentPage()} // This would cause an error now
+                onClick={() => extpay.openPaymentPage()} // Restore original onClick
                 style={{ marginTop: '10px' }}
-                disabled={loading}
+                disabled={loading || !extPayUser} // Disable until extPayUser loaded
             >
                 {isPaidUser ? 'Manage Subscription / Billing' : 'Upgrade to Premium'}
-            </button>
-            */}
-             <button 
-                className="button"
-                style={{ marginTop: '10px', backgroundColor: '#555', cursor: 'not-allowed' }}
-                disabled={true} // Disable upgrade button
-                title="Payment system temporarily disabled"
-            >
-                {isPaidUser ? 'Manage Subscription (Disabled)' : 'Upgrade (Disabled)'}
             </button>
             {/* Add Sign Out Button */}
             <button

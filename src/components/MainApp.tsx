@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
 import type { Session } from '@supabase/supabase-js';
-// import ExtPay from 'extpay'; // <-- Comment out ExtPay import
+import ExtPay from 'extpay'; // <-- Uncomment ExtPay import
 import SettingsTab from './SettingsTab'; // Import SettingsTab
 import AnalyticsTab from './AnalyticsTab'; // Import AnalyticsTab
 
 // Initialize ExtPay - Use your Extension ID
-// const extpay = ExtPay('lightning-bolt-fix'); // <-- Comment out ExtPay initialization
+const extpay = ExtPay('lightning-bolt-fix'); // <-- Uncomment ExtPay initialization
 
 // Define structure for a single LLM configuration row
 // Matches the llm_user_configurations table
@@ -171,16 +171,16 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
       // --- Payment & Free Fix Check (Keep this logic as is) --- 
       let canProceed = false;
       try {
-        /* // Comment out ExtPay check Start
+        // Uncomment ExtPay check Start
         const extUser = await extpay.getUser();
         if (extUser.paid) {
             console.log("User is paid. Proceeding with fix.");
             canProceed = true;
         } else {
-        */ // Comment out ExtPay check End
+        // Uncomment ExtPay check End
 
             // --- Start: Assume user is NOT paid (Free Tier Logic) ---
-            console.log("ExtPay Disabled: Assuming free tier. Checking free fixes...");
+            console.log("User is not paid. Checking free fixes..."); // Keep original log
             // Fetch profile specifically for free fixes count
             const { data: freeFixProfile, error: freeFixError } = await supabase
               .from('profiles')
@@ -209,9 +209,9 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
             }
             // --- End: Assume user is NOT paid (Free Tier Logic) ---
 
-        /* // Comment out ExtPay check Else block Start
+        // Uncomment ExtPay check Else block Start
         }
-        */ // Comment out ExtPay check Else block End
+        // Uncomment ExtPay check Else block End
       } catch (extPayCheckError: any) {
           console.error("Error during payment/free fix check:", extPayCheckError);
           throw extPayCheckError;

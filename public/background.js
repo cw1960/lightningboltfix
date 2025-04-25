@@ -2,21 +2,20 @@
 // import ExtPay from 'extpay'; // Revert this
 
 // --- ExtPay Initialization ---
-/* // Comment out ExtPay Block Start
+// Uncomment ExtPay Block Start
 try {
     // Use importScripts as recommended for MV3 service workers by ExtPay docs
-    self.importScripts('ExtPay.js'); 
+    self.importScripts('ExtPay.js');
 } catch (e) {
     console.error("Failed to import ExtPay.js. Ensure it's included in the build output (e.g., in the public folder).");
 }
-// Remove importScripts block <-- This comment is now incorrect, removed.
 
 // Initialize ExtPay - DO THIS ONLY ONCE AT THE TOP LEVEL
 let extpayInstance;
 try {
     // Check if ExtPay loaded successfully via importScripts
-    if (typeof ExtPay !== 'undefined') { 
-        extpayInstance = ExtPay('lightning-bolt-fix'); 
+    if (typeof ExtPay !== 'undefined') {
+        extpayInstance = ExtPay('lightning-bolt-fix');
         extpayInstance.startBackground(); // Required setup
         console.log("ExtPay background started.");
     } else {
@@ -25,7 +24,7 @@ try {
 } catch (e) {
     console.error("ExtPay initialization failed:", e);
 }
-*/ // Comment out ExtPay Block End
+// Uncomment ExtPay Block End
 // --- End ExtPay Initialization ---
 
 console.log('Background service worker started.');
