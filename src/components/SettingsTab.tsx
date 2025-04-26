@@ -86,6 +86,8 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ session, refreshTrigger }) =>
 
   // Fetch LLM configurations and ExtPay status
   const fetchData = useCallback(async () => {
+    // Add log at start of fetchData
+    console.log("[SettingsTab fetchData] Triggered. refreshTrigger value:", refreshTrigger);
     setLoading(true);
     setError(null);
     // Reset count before fetching
@@ -133,6 +135,8 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ session, refreshTrigger }) =>
           // Rethrow or handle based on desired UX
           throw new Error(`Failed to load profile data: ${profileError.message}`);
       }
+      // Add log before setting state
+      console.log("[SettingsTab fetchData] Fetched profile data:", profileData);
       setFreeFixesUsed(profileData?.free_fixes_used ?? 0);
       // --- Fetch Free Fix Count --- END ---
 
@@ -147,8 +151,10 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ session, refreshTrigger }) =>
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.user.id, refreshTrigger]); // Add refreshTrigger to dependency array
 
-  // Fetch data on component mount
+  // Fetch data on component mount and when refreshTrigger changes
   useEffect(() => {
+    // Add log inside useEffect
+    console.log("[SettingsTab useEffect] Running due to session/trigger change. refreshTrigger:", refreshTrigger);
     fetchData();
   }, [fetchData]);
 

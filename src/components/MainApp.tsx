@@ -195,14 +195,17 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
 
             if (fixesUsed < FREE_FIX_LIMIT) {
                 console.log("Free fix available. Incrementing count...");
+                // Add log before RPC call
+                console.log("[handleFixCode] Calling increment_free_fixes RPC for user:", session.user.id);
                 const { error: rpcError } = await supabase.rpc('increment_free_fixes', { 
                     user_id_to_increment: session.user.id 
                 });
                 if (rpcError) {
-                    console.error("Failed to increment free fix counter:", rpcError);
+                    console.error("[handleFixCode] Failed to increment free fix counter via RPC:", rpcError);
                     throw new Error("Failed to update free fix count. Please try again.");
                 }
-                console.log("Free fix count incremented. Proceeding with fix.");
+                // Add log after successful RPC call
+                console.log("[handleFixCode] increment_free_fixes RPC successful.");
                 canProceed = true;
             } else {
                  throw new Error(`Free fix limit (${FREE_FIX_LIMIT}/${FREE_FIX_LIMIT}) reached. Please upgrade to the Premium plan via the Settings tab.`);
@@ -422,11 +425,13 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
       });
 
       if (saveError) {
-        console.error('Failed to save fix details:', saveError);
+        console.error('[handleFixCode] Failed to save fix details:', saveError);
         // Display the actual error message from Supabase
         const detailedMessage = saveError.message || 'Unknown database error during history save';
         setError(`Code fixed, but failed to save history: ${detailedMessage}`);
       } else {
+          // Add log before incrementing counter
+          console.log("[handleFixCode] Fix saved successfully. Incrementing fixSavedCounter.");
           // Increment counter to trigger potential refresh in Analytics
           setFixSavedCounter(prev => prev + 1); 
       }
