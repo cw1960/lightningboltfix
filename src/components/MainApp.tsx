@@ -4,9 +4,10 @@ import type { Session } from '@supabase/supabase-js';
 import ExtPay from 'extpay'; // <-- Uncomment ExtPay import
 import SettingsTab from './SettingsTab'; // Import SettingsTab
 import AnalyticsTab from './AnalyticsTab'; // Import AnalyticsTab
+import FeedbackTab from './FeedbackTab';
 
 // Initialize ExtPay - Use your Extension ID
-const extpay = ExtPay('lightning-bolt-fix'); // <-- Uncomment ExtPay initialization
+const extpay = ExtPay('lightning-bolt-fix'); // <-- Updated ExtensionPay initialization
 
 // Define structure for a single LLM configuration row
 // Matches the llm_user_configurations table
@@ -39,8 +40,15 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
   const [isPickingElement, setIsPickingElement] = useState(false); // State for error picker mode
   const [errorFixPlan, setErrorFixPlan] = useState(''); // <-- Add state for the plan
   const [isPickingPlanElement, setIsPickingPlanElement] = useState(false); // <-- Add state for plan picker mode
+  const [showSettings, setShowSettings] = useState(false); // State to toggle settings tab
+  const [refreshCounter] = useState(0); // Remove setRefreshCounter, only keep refreshCounter if used
+  const [copyExplanationText, setCopyExplanationText] = useState('Copy Explanation');
+  const [isExplanationOpen, setIsExplanationOpen] = useState(false); // Add this line
+  const [mainButtonMode, setMainButtonMode] = useState<'fix' | 'copy'>('fix');
 
   const FREE_FIX_LIMIT = 10;
+
+  const YOUTUBE_URL = 'https://youtu.be/zWlzxSXmpxY';
 
   // --- Message Listener Effect ---
   useEffect(() => {
@@ -88,10 +96,11 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
     setExplanation(null);
     setError(null);
     setLoading(false);
-    setCopyButtonText('Copy Fixed Code'); 
-    setIsPickingElement(false); 
-    setErrorFixPlan(''); // <-- Clear plan state
-    setIsPickingPlanElement(false); // <-- Clear plan picker state
+    setCopyButtonText('Copy Fixed Code');
+    setIsPickingElement(false);
+    setErrorFixPlan('');
+    setIsPickingPlanElement(false);
+    setMainButtonMode('fix');
     console.log('State reset for new error.');
   };
 
@@ -160,10 +169,12 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
 
   // --- Handle Fix Code Logic ---
   const handleFixCode = async () => {
+    const extUser = await extpay.getUser();
     setLoading(true);
     setError(null);
     setFixedCode(null);
     setExplanation(null);
+    setMainButtonMode('fix');
 
     let defaultLlmConfig: LlmConfiguration | null = null; // Store the fetched config
 
@@ -172,7 +183,6 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
       let canProceed = false;
       try {
         // Uncomment ExtPay check Start
-        const extUser = await extpay.getUser();
         if (extUser.paid) {
             console.log("User is paid. Proceeding with fix.");
             canProceed = true;
@@ -184,31 +194,20 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
             // Fetch profile specifically for free fixes count
             const { data: freeFixProfile, error: freeFixError } = await supabase
               .from('profiles')
-              .select('free_fixes_used') // Still need this from profiles
+              .select('free_fixes_used, use_builtin_keys')
               .eq('id', session.user.id)
-              .single<{ free_fixes_used: number }>();
+              .maybeSingle<{ free_fixes_used: number, use_builtin_keys?: boolean }>();
 
             if (freeFixError) throw new Error("Could not verify free fix count.");
             
             const fixesUsed = freeFixProfile?.free_fixes_used ?? 0;
             console.log(`Free fixes used: ${fixesUsed} / ${FREE_FIX_LIMIT}`);
-
             if (fixesUsed < FREE_FIX_LIMIT) {
-                console.log("Free fix available. Incrementing count...");
-                // Add log before RPC call
-                console.log("[handleFixCode] Calling increment_free_fixes RPC for user:", session.user.id);
-                const { error: rpcError } = await supabase.rpc('increment_free_fixes', { 
-                    user_id_to_increment: session.user.id 
-                });
-                if (rpcError) {
-                    console.error("[handleFixCode] Failed to increment free fix counter via RPC:", rpcError);
-                    throw new Error("Failed to update free fix count. Please try again.");
-                }
-                // Add log after successful RPC call
-                console.log("[handleFixCode] increment_free_fixes RPC successful.");
-                canProceed = true;
+              canProceed = true;
             } else {
-                 throw new Error(`Free fix limit (${FREE_FIX_LIMIT}/${FREE_FIX_LIMIT}) reached. Please upgrade to the Premium plan via the Settings tab.`);
+              setError("You have used all your free fixes. Please upgrade to continue.");
+              setLoading(false);
+              return;
             }
             // --- End: Assume user is NOT paid (Free Tier Logic) ---
 
@@ -226,23 +225,38 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
       // --- End Payment & Free Fix Check ---
 
       // 1. Fetch the user's default LLM configuration
-      const { data: configData, error: configError } = await supabase
+      console.log('Frontend user id:', session.user.id); // Debug log for user id
+      let configData, configError;
+      ({ data: configData, error: configError } = await supabase
         .from('llm_user_configurations')
         .select('*') // Select all columns from the config table
         .eq('profile_id', session.user.id)
         .eq('is_default', true)
         .limit(1) // Should only be one default
-        .maybeSingle<LlmConfiguration>(); // Use maybeSingle in case no default is set
-
+        .maybeSingle<LlmConfiguration>());
+      console.log('Fetched default LLM config (first try):', configData, configError);
+      if (!configData) {
+        // Force a refresh: try fetching again
+        await new Promise(res => setTimeout(res, 500)); // Small delay to allow backend to catch up
+        ({ data: configData, error: configError } = await supabase
+          .from('llm_user_configurations')
+          .select('*')
+          .eq('profile_id', session.user.id)
+          .eq('is_default', true)
+          .limit(1)
+          .maybeSingle<LlmConfiguration>());
+        console.log('Fetched default LLM config (second try):', configData, configError);
+      }
       if (configError) throw new Error(`Failed to fetch LLM configuration: ${configError.message}`);
       if (!configData) throw new Error('No default LLM configuration found. Please set one in Settings.');
-      
       defaultLlmConfig = configData; // Assign to the outer scope variable
 
+      // --- API Key Selection Logic ---
+      let apiKey: string = defaultLlmConfig?.api_key || '';
+      
       // 2. Determine API details based on the provider type
       const llmProvider = defaultLlmConfig.provider_type;
       const llmModelName = defaultLlmConfig.model_name;
-      const apiKey = defaultLlmConfig.api_key;
       let apiUrl: string = '';
       let requestBody: any = {};
       let headers: HeadersInit = { 'Content-Type': 'application/json' };
@@ -254,22 +268,40 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
         'Errant Code (Full File Content):\n' +
         '```\n' + errantCode + '\n```\n\n' +
         '## CRITICAL TASK & STRICT REQUIREMENTS ##\n' +
-        'Your ONLY goal is to return the **COMPLETE, UNMODIFIED ORIGINAL CODE PLUS THE NECESSARY FIX** based on the Plan and Error Message. You MUST fix the errant code provided above, strictly following the Plan provided. Your response MUST strictly follow this format:\n\n' +
-        '1.  **Explanation:**\n' +
-        '    A concise explanation of the error and the fix applied (informed by the Plan).\n' +
-        '    **CRITICAL VERIFICATION CONFIRMATION:** You MUST include the phrase "Verification complete: Full original code preserved." in this explanation section to confirm you have performed the check described below.\n\n' +
-        '2.  **Fixed Code (COMPLETE and UNALTERED Original + Fix):**\n' +
-        '    This section **MUST** contain the **ENTIRE, COMPLETE, UNALTERED ORIGINAL CODE PLUS THE FIX**. It is **NON-NEGOTIABLE** that you return the *full file content* as it needs to replace the original file directly. Any deviation will break the user\'s application.\n' +
-        '    - **VERIFY:** Before outputting the code block, perform a mental line-by-line comparison between the original "Errant Code" input and your generated "Fixed Code" output. Ensure that *every single line* from the original code is present in the output, UNLESS it was explicitly modified as part of the fix according to the Plan. Confirm that you have NOT commented out any previously active code or added placeholders like `...` or `// existing code`. This verification is MANDATORY.\n' +
-        '    - **ABSOLUTELY NO** returning only the changed snippet or function.\n' +
-        '    - **ABSOLUTELY NO** omitting *any* part of the original code (imports, comments, functions, structure, whitespace etc.).\n' +
-        '    - **ABSOLUTELY NO** using ellipses (`...`) or placeholders (e.g., `// ... rest of code ...`, `{/* ... */}`).\n' +
-        '    - **ABSOLUTELY NO** summarizing, truncating, or commenting out existing, functional code.\n' +
-        '    - **ONLY** modify the lines necessary to correct the error according to the Plan.\n' +
-        '    - The code block below **MUST** represent the **COMPLETE AND RUNNABLE** file content.\n' +
-        '    Enclose the **COMPLETE, ENTIRE, and VERIFIED** fixed code within a single markdown code block starting with ```language (e.g., ```javascript) and ending with ```.\n\n' +
+        'Your ONLY goal is to return the **COMPLETE, UNMODIFIED ORIGINAL CODE PLUS THE NECESSARY FIX** based on the Plan and Error Message.\n' +
+        'You MUST fix the errant code provided above, strictly following the Plan provided.\n' +
+        '\n' +
+        '## RESPONSE FORMAT (MANDATORY) ##\n' +
+        'You MUST return your response in **TWO CLEARLY SEPARATED BLOCKS**:\n' +
+        '1. **Explanation Block:**\n' +
+        '   - A concise explanation of the error and the fix applied (informed by the Plan).\n' +
+        '   - **DO NOT** include any code in this block.\n' +
+        '   - End this block before the code block begins.\n' +
+        '2. **Fixed Code Block:**\n' +
+        '   - The **ENTIRE, COMPLETE, UNALTERED ORIGINAL CODE PLUS THE FIX**.\n' +
+        '   - This block MUST be in a single markdown code block, e.g. ```javascript ... ``` or ```python ... ```\n' +
+        '   - **DO NOT** include any explanation, comments, or text outside the code block.\n' +
+        '\n' +
+        '### ABSOLUTE RULES:\n' +
+        '- The explanation and code must be in SEPARATE blocks.\n' +
+        '- The code block must be the ONLY code in your response.\n' +
+        '- DO NOT put explanation or comments inside the code block.\n' +
+        '- DO NOT return both in a single block.\n' +
+        '- DO NOT add extra text before or after the code block.\n' +
+        '- DO NOT use ellipses (`...`) or placeholders (e.g., // ... rest of code ...).\n' +
+        '- DO NOT summarize, truncate, or comment out existing, functional code.\n' +
+        '- ONLY modify the lines necessary to correct the error according to the Plan.\n' +
+        '\n' +
+        '### TEMPLATE (MANDATORY):\n' +
+        'Explanation:\n' +
+        'Your explanation here.\n' +
+        '\n' +
+        '```language\n' +
+        '...COMPLETE FIXED CODE HERE...\n' +
+        '```\n' +
+        '\n' +
         '## FINAL CHECK & CONSEQUENCE ##\n' +
-        'Failure to provide the COMPLETE and UNALTERED original code (plus the fix) in the specified format, OR failure to include the verification confirmation phrase in the explanation, will render the output useless and break the application. Return ONLY the explanation (including the confirmation phrase) and the **COMPLETE** fixed code block.\n';
+        'Failure to provide the explanation and code in SEPARATE blocks, or to include the COMPLETE and UNALTERED original code (plus the fix) in the code block, will render the output useless and break the application. Return ONLY the explanation (including the confirmation phrase) and the **COMPLETE** fixed code block, in the format above.';
 
       switch (llmProvider) {
         case 'Anthropic':
@@ -412,6 +444,7 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
 
       setExplanation(explanationText);
       setFixedCode(fixedCodeBlock);
+      setMainButtonMode('copy');
 
       // 5. Save the results to the database
       const { error: saveError } = await supabase.from('fixes').insert({
@@ -430,12 +463,35 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
         const detailedMessage = saveError.message || 'Unknown database error during history save';
         setError(`Code fixed, but failed to save history: ${detailedMessage}`);
       } else {
-          // Add log before incrementing counter
-          console.log("[handleFixCode] Fix saved successfully. Incrementing fixSavedCounter.");
-          // Increment counter to trigger potential refresh in Analytics
-          setFixSavedCounter(prev => prev + 1); 
+        // Add log before incrementing counter
+        console.log("[handleFixCode] Fix saved successfully. Incrementing fixSavedCounter.");
+        setFixSavedCounter(prev => prev + 1);
+      
+        // Increment free_fixes_used for free users (extUser is in scope here)
+        if (!extUser.paid) {
+          const { data: profile, error: profileError } = await supabase
+            .from('profiles')
+            .select('free_fixes_used')
+            .eq('id', session.user.id)
+            .single();
+      
+          if (!profileError && profile) {
+            const newCount = (profile.free_fixes_used ?? 0) + 1;
+            const { error: updateError } = await supabase
+              .from('profiles')
+              .update({ free_fixes_used: newCount })
+              .eq('id', session.user.id);
+      
+            if (updateError) {
+              console.error('Failed to increment free_fixes_used:', updateError);
+            } else {
+              console.log('Successfully incremented free_fixes_used to', newCount);
+            }
+          } else {
+            console.error('Failed to fetch profile for incrementing free_fixes_used:', profileError);
+          }
+        }
       }
-
     } catch (err: any) {
       console.error('handleFixCode Error:', err);
       setError(err.message || 'An unexpected error occurred');
@@ -454,215 +510,377 @@ const MainApp: React.FC<MainAppProps> = ({ session }) => {
       setCopyButtonText('Copied!');
       // Reset button text after a short delay
       setTimeout(() => setCopyButtonText('Copy Fixed Code'), 2000);
-    }).catch(err => {
+    }).catch(() => {
       // Failure
-      console.error('Failed to copy code:', err);
       setCopyButtonText('Copy Failed');
-      // Optionally display a more prominent error to the user
       setError('Failed to copy code to clipboard.'); // Use existing error state
       setTimeout(() => setCopyButtonText('Copy Fixed Code'), 3000); // Reset later on failure
     });
   };
   // --- Copy Handler --- END
 
+  // --- Toggle Settings --- 
+  const toggleSettings = () => {
+      setShowSettings(!showSettings);
+      // Optionally trigger refresh when settings are opened?
+      // setRefreshCounter(prev => prev + 1); 
+  };
+
+  // --- Add handler for main button copy
+  const handleMainCopyCode = () => {
+    if (!fixedCode) return;
+    navigator.clipboard.writeText(fixedCode).then(() => {
+      setCopyButtonText('Copied!');
+      setTimeout(() => setCopyButtonText('Copy Fixed Code'), 2000);
+    }).catch(() => {
+      setCopyButtonText('Copy Failed');
+      setTimeout(() => setCopyButtonText('Copy Fixed Code'), 3000);
+    });
+  };
+
   // --- Render Logic ---
   return (
     <div className="container">
-      {/* Header */}
+      {/* Header with conditional Settings button */}
       <div className="header">
-        <div className="logo">
-          {/* Replace existing SVG/H1 with the image */}
-          <img 
-            src="https://i.imgur.com/twNKfqN.png"
-            alt="Lightning Bolt Fix Logo"
-            style={{ width: '90px', height: '90px' }} // Apply size
-          />
-        </div>
-        {/* --- Move Fix New Error button from header --- */}
-        {/* 
-        <button
-          className="button"
-          onClick={handleReset}
-          style={{
-            // Change background to green if fix is complete and no error/loading
-            backgroundColor: (fixedCode && !loading && !error) ? '#28a745' : '#555',
-          }}
-        >
-          Fix New Error
-        </button>
-        */}
+          {/* Logo */}
+          <div className="logo">
+              <img src="icons/icon128.png" alt="Lightning Bolt Fix V3 Logo" style={{width:'32px',height:'32px',marginRight:'8px',verticalAlign:'middle'}} />
+              <h1>Lightning Bolt Fix V3</h1>
+          </div>
+          {/* Toggle Settings Button */}
+          <button onClick={toggleSettings} className="button button-secondary">
+              {showSettings ? 'Back to Fix' : 'Settings'}
+          </button>
       </div>
 
-      {/* Tab Navigation */}
+      {/* Tabs Menu (only one instance) */}
       <div className="tabs">
         <div 
           className={`tab ${activeTab === 'fix' ? 'active' : ''}`}
           onClick={() => setActiveTab('fix')}
         >
-          Fix Code
+          <div style={{display:'flex',alignItems:'center',marginBottom:'4px'}}>
+            <span style={{display:'inline-block',width:'8px',height:'8px',borderRadius:'50%',background:'#e6007a',marginRight:'4px'}}></span>
+            <span style={{fontWeight:'bold',fontSize:'1em'}}>Fix Code</span>
+          </div>
         </div>
         <div 
           className={`tab ${activeTab === 'settings' ? 'active' : ''}`}
           onClick={() => setActiveTab('settings')}
         >
-          Settings
+          <div style={{display:'flex',alignItems:'center',marginBottom:'4px'}}>
+            <span style={{display:'inline-block',width:'8px',height:'8px',borderRadius:'50%',background:'#e6007a',marginRight:'4px'}}></span>
+            <span style={{fontWeight:'bold',fontSize:'1em'}}>Settings</span>
+          </div>
         </div>
         <div 
           className={`tab ${activeTab === 'analytics' ? 'active' : ''}`}
           onClick={() => setActiveTab('analytics')}
         >
-          Analytics
+          <div style={{display:'flex',alignItems:'center',marginBottom:'4px'}}>
+            <span style={{display:'inline-block',width:'8px',height:'8px',borderRadius:'50%',background:'#e6007a',marginRight:'4px'}}></span>
+            <span style={{fontWeight:'bold',fontSize:'1em'}}>Analytics</span>
+          </div>
+        </div>
+        <div 
+          className={`tab ${activeTab === 'feedback' ? 'active' : ''}`}
+          onClick={() => setActiveTab('feedback')}
+        >
+          <div style={{display:'flex',alignItems:'center',marginBottom:'4px'}}>
+            <span style={{display:'inline-block',width:'8px',height:'8px',borderRadius:'50%',background:'#e6007a',marginRight:'4px'}}></span>
+            <span style={{fontWeight:'bold',fontSize:'1em'}}>Feedback</span>
+          </div>
         </div>
       </div>
 
-      {/* Tab Content */} 
-      <div id="fixTab" className={`tab-content ${activeTab === 'fix' ? 'active' : ''}`}> 
-        
-        {/* --- Add Fix New Error button inside Fix tab --- */}
-        {/* Show button only if results are present or loading/error occurred */}
-        {(fixedCode || explanation || loading || error) && (
-           <div style={{ marginBottom: '16px', textAlign: 'right' }}> {/* Align to right */} 
-             <button
-               className="button"
-               onClick={handleReset}
-               style={{
-                 // Adjust style as needed
-                 backgroundColor: (fixedCode && !loading && !error) ? '#28a745' : '#555',
-                 padding: '4px 8px', // Smaller padding
-                 fontSize: '0.9em'  // Slightly smaller font
-               }}
-             >
-               Fix New Error
-             </button>
-           </div>
-         )}
+      {/* Special Content Script Error Message (just below Tabs) */}
+      {error && error.includes("Content script not ready") && (
+        <div className="box error" style={{ border: '1px solid #ef4444', background: '#444', marginTop: 12, marginBottom: 12 }}>
+          <p style={{ fontWeight: 'bold' }}>Error:</p>
+          <p style={{ marginTop: 8 }}>
+            When loading the extension you'll sometimes have to refresh the active page.<br />
+            Please click the <b>Reload Page</b> button and then begin using the extension.
+          </p>
+          <button
+            className="button"
+            onClick={() => {
+              setError(null); // Hide the error message
+              if (window.chrome?.tabs) {
+                chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+                  if (tabs[0]?.id) chrome.tabs.reload(tabs[0].id);
+                });
+              }
+            }}
+            style={{ marginTop: 8 }}
+          >
+            Reload Page
+          </button>
+        </div>
+      )}
 
-        {/* Error Message Input Area */} 
-        <div className="box form-group"> 
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-            <label htmlFor="errorMessageInput" style={{ marginBottom: 0 }}>Error Message</label>
-            {/* Add Picker Button - Renamed */}
-            <button 
-              id="pickElementButton"
-              className="button" 
-              onClick={handlePickElementClick} 
-              disabled={isPickingElement} 
-              style={{ padding: '4px 8px', fontSize: '0.8em'}} // Smaller button
-            >
-              {isPickingElement ? 'Picking...' : 'Select Error Message'} 
-            </button>
-          </div>
-          <input 
-            id="errorMessageInput" 
-            className="input" 
-            value={errorMessage} 
-            onChange={(e) => setErrorMessage(e.target.value)} 
-            placeholder="Paste error message here or use Pick Element" // Updated placeholder
-            disabled={loading} 
-          /> 
-        </div> 
- 
-        {/* Plan Input Area (Moved) */}
-        <div className="box form-group"> 
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-            <label htmlFor="errorFixPlanInput" style={{ marginBottom: 0 }}>The Plan</label>
-            {/* Add Picker Button for Plan - Renamed */}
-            <button 
-              id="pickPlanElementButton"
-              className="button" 
-              onClick={handlePickPlanElementClick} 
-              disabled={isPickingPlanElement} 
-              style={{ padding: '4px 8px', fontSize: '0.8em'}}
-            >
-              {isPickingPlanElement ? 'Picking...' : 'Select "The Plan" Text'} 
-            </button>
-          </div>
-          <textarea 
-            id="errorFixPlanInput" 
-            className="textarea"  
-            value={errorFixPlan}  
-            onChange={(e) => setErrorFixPlan(e.target.value)}  
-            placeholder="Describe or pick the plan/steps to fix the error."
-            rows={3} // Shorter text area for plan
-            disabled={loading} 
-          ></textarea> 
-        </div> 
- 
-        {/* Errant Code Input Area */} 
-        <div className="box form-group"> 
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-            <label htmlFor="errantCodeInput" style={{ marginBottom: 0 }}>Paste Full Code File Here</label>
-          </div>
-          <textarea 
-            id="errantCodeInput" 
-            className="textarea"  
-            value={errantCode}  
-            onChange={(e) => setErrantCode(e.target.value)}  
-            placeholder="Manually copy the full code from the file and paste it here." // Updated placeholder 
-            rows={10} 
-            disabled={loading} // No longer disabled by isPickingCode
-          ></textarea> 
-        </div> 
- 
-        {/* Fix Code Button Area */} 
-        <div style={{ textAlign: 'center' }}> 
-          <button  
-            className="button"  
-            onClick={handleFixCode}  
-            disabled={loading || !errorMessage || !errantCode} 
-          > 
-            {loading ? <span className="loading"></span> : 'Fix Code'} 
-          </button>  
-        </div> 
- 
-        {/* Display Loading or Error */} 
-        {loading && <div className="box"><span className="loading"></span> Processing...</div>} 
-        {error && !loading && ( 
-          <div className="box error" style={{ border: '1px solid #ef4444', background: '#444' }}> 
-            <p style={{ fontWeight: 'bold' }}>Error:</p> 
-            <p style={{ whiteSpace: 'pre-wrap' }}>{error}</p> 
-          </div> 
-        )} 
- 
-        {/* Results Area */} 
-        {!loading && !error && (explanation || fixedCode) && ( 
-          <div className="box"> 
-            {explanation && ( 
-              <div> 
-                <h2>Explanation</h2> 
-                <p style={{ whiteSpace: 'pre-wrap' }}>{explanation}</p> 
-              </div> 
-            )} 
-            {fixedCode && ( 
-              <div style={{ marginTop: explanation ? '16px' : '0' }}> 
-                {/* Flex container for Title and Button */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                  <h2>Fixed Code</h2> 
-                  <button  
-                    className="button"  
-                    style={{ padding: '4px 8px', fontSize: '0.8em'}} // Smaller button, adjust as needed
-                    onClick={handleCopyCode} 
-                  > 
-                    {copyButtonText} 
-                  </button> 
+      {/* Conditional Rendering: Settings Tab or Main Fix UI */}
+      {showSettings ? (
+          <SettingsTab session={session} refreshTrigger={refreshCounter} /> // <<< PASS REFRESH TRIGGER
+      ) : (
+          <>
+              {/* Main Fix UI */}
+              {/* Tab Content */} 
+              <div id="fixTab" className={`tab-content ${activeTab === 'fix' ? 'active' : ''}`}> 
+                
+                {/* Demo Video Link */}
+                <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginBottom: 4 }}>
+                  <button
+                    type="button"
+                    onClick={() => window.open(YOUTUBE_URL, '_blank', 'noopener,noreferrer')}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: '#60a5fa',
+                      fontSize: '0.92em',
+                      textDecoration: 'underline',
+                      cursor: 'pointer',
+                      padding: 0,
+                      marginRight: 2,
+                      opacity: 0.85,
+                      fontWeight: 500,
+                    }}
+                    aria-label="Watch demo video"
+                  >
+                    <svg width="18" height="18" viewBox="0 0 48 48" style={{ verticalAlign: 'middle', marginRight: 4 }}><circle cx="24" cy="24" r="24" fill="#000" fillOpacity="0.3"/><polygon points="20,16 34,24 20,32" fill="#60a5fa"/></svg>
+                    Watch Demo Video
+                  </button>
                 </div>
-                <pre className='result-code' style={{ whiteSpace: 'pre-wrap', background: '#1a1a1a', padding: '10px', borderRadius: '4px' }}>{fixedCode}</pre> 
-              </div> 
-            )} 
-          </div> 
-        )} 
-      </div>
 
-      <div id="settingsTab" className={`tab-content ${activeTab === 'settings' ? 'active' : ''}`}>
-        {/* Render SettingsTab, passing the session and refresh trigger */}
-        <SettingsTab session={session} refreshTrigger={fixSavedCounter} />
-      </div>
+                {/* --- Add Fix New Error button inside Fix tab --- */}
+                {/* Show button only if results are present or loading/error occurred */}
+                {(fixedCode || explanation || loading || error) && (
+                   <div style={{ marginBottom: '16px', textAlign: 'right' }}> {/* Align to right */} 
+                     <button
+                       className="button"
+                       onClick={handleReset}
+                       style={{
+                         // Adjust style as needed
+                         backgroundColor: (fixedCode && !loading && !error) ? '#28a745' : '#555',
+                         padding: '4px 8px', // Smaller padding
+                         fontSize: '0.9em'  // Slightly smaller font
+                       }}
+                     >
+                       Fix New Error
+                     </button>
+                   </div>
+                 )}
 
-      <div id="analyticsTab" className={`tab-content ${activeTab === 'analytics' ? 'active' : ''}`}>
-        {/* Pass counter as refreshTrigger prop */}
-        <AnalyticsTab session={session} refreshTrigger={fixSavedCounter} />
-      </div>
+                {/* Error Message Input Area */} 
+                <div className="box form-group"> 
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                    <label htmlFor="errorMessageInput" style={{ marginBottom: 0 }}>Error Message</label>
+                    {/* Add Picker Button - Renamed */}
+                    <button 
+                      id="pickElementButton"
+                      className="button" 
+                      onClick={handlePickElementClick} 
+                      disabled={isPickingElement} 
+                      style={{ padding: '4px 8px', fontSize: '0.8em'}} // Smaller button
+                    >
+                      {isPickingElement ? 'Picking...' : 'Select Error Message'} 
+                    </button>
+                  </div>
+                  <input 
+                    id="errorMessageInput" 
+                    className="input" 
+                    value={errorMessage} 
+                    onChange={(e) => setErrorMessage(e.target.value)} 
+                    placeholder="Paste error message here or use Pick Element" // Updated placeholder
+                    disabled={loading} 
+                  /> 
+                </div> 
+         
+                {/* Plan Input Area (Moved) */}
+                <div className="box form-group"> 
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                    <label htmlFor="errorFixPlanInput" style={{ marginBottom: 0 }}>The Plan</label>
+                    {/* Add Picker Button for Plan - Renamed */}
+                    <button 
+                      id="pickPlanElementButton"
+                      className="button" 
+                      onClick={handlePickPlanElementClick} 
+                      disabled={isPickingPlanElement} 
+                      style={{ padding: '4px 8px', fontSize: '0.8em'}}
+                    >
+                      {isPickingPlanElement ? 'Picking...' : 'Select "The Plan" Text'} 
+                    </button>
+                  </div>
+                  <textarea 
+                    id="errorFixPlanInput" 
+                    className="textarea"  
+                    value={errorFixPlan}  
+                    onChange={(e) => setErrorFixPlan(e.target.value)}  
+                    placeholder="Describe or pick the plan/steps to fix the error."
+                    rows={3} // Shorter text area for plan
+                    disabled={loading} 
+                  ></textarea> 
+                </div> 
+         
+                {/* Errant Code Input Area */} 
+                <div className="box form-group"> 
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                    <label htmlFor="errantCodeInput" style={{ marginBottom: 0 }}>Paste Full Code File Here</label>
+                  </div>
+                  <textarea 
+                    id="errantCodeInput" 
+                    className="textarea"  
+                    value={errantCode}  
+                    onChange={(e) => setErrantCode(e.target.value)}  
+                    placeholder="Manually copy the full code from the file and paste it here." // Updated placeholder 
+                    rows={10} 
+                    disabled={loading} // No longer disabled by isPickingCode
+                  ></textarea> 
+                </div> 
+         
+                {/* Fix Code Button Area */} 
+                <div style={{ textAlign: 'center' }}>
+                  {mainButtonMode === 'fix' ? (
+                    <button
+                      className="button"
+                      onClick={handleFixCode}
+                      disabled={loading || !errorMessage || !errantCode}
+                      style={{ backgroundColor: '#1488fc', color: 'white' }}
+                    >
+                      {loading ? <span className="loading"></span> : 'Fix Code'}
+                    </button>
+                  ) : (
+                    <button
+                      className="button"
+                      onClick={handleMainCopyCode}
+                      style={{ backgroundColor: '#28a745', color: 'white' }}
+                    >
+                      {copyButtonText}
+                    </button>
+                  )}
+                </div>
+         
+                {/* Display Loading or Error */} 
+                {loading && <div className="box"><span className="loading"></span> Processing...</div>} 
+                {error && !loading && ( 
+                  error.includes("Content script not ready") ? (
+                    <div className="box error" style={{ border: '1px solid #ef4444', background: '#444' }}>
+                      <p style={{ fontWeight: 'bold' }}>Error:</p>
+                      <p style={{ whiteSpace: 'pre-wrap' }}>{error}</p>
+                      <p style={{ marginTop: 8 }}>
+                        When loading the extension you'll sometimes have to refresh the active page.<br />
+                        Please click the <b>Reload Page</b> button and then begin using the extension.
+                      </p>
+                      <button
+                        className="button"
+                        onClick={() => {
+                          if (window.chrome?.tabs) {
+                            chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+                              if (tabs[0]?.id) chrome.tabs.reload(tabs[0].id);
+                            });
+                          }
+                        }}
+                        style={{ marginTop: 8 }}
+                      >
+                        Reload Page
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="box error" style={{ border: '1px solid #ef4444', background: '#444' }}>
+                      <p style={{ fontWeight: 'bold' }}>Error:</p>
+                      <p style={{ whiteSpace: 'pre-wrap' }}>{error}</p>
+                    </div>
+                  )
+                )} 
+         
+                {/* Results Area */} 
+                {!loading && !error && (explanation || fixedCode) && ( 
+                  <div className="box"> 
+                    {/* Collapsible Explanation Block */}
+                    {explanation && (
+                      <div style={{ marginBottom: '16px' }}>
+                        <div
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            cursor: 'pointer',
+                            userSelect: 'none',
+                            background: '#23272f',
+                            borderRadius: '4px',
+                            padding: '8px 12px',
+                            border: '1px solid #333',
+                          }}
+                          onClick={() => setIsExplanationOpen((open) => !open)}
+                          aria-expanded={isExplanationOpen}
+                          aria-controls="explanation-content"
+                          tabIndex={0}
+                          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') setIsExplanationOpen(open => !open); }}
+                        >
+                          <h2 style={{ margin: 0, fontSize: '1.1em' }}>Explanation</h2>
+                          <span style={{ fontSize: '1.2em', marginLeft: 8 }}>{isExplanationOpen ? '▼' : '▶'}</span>
+                        </div>
+                        {isExplanationOpen && (
+                          <div id="explanation-content" style={{ marginTop: 8 }}>
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+                              <button
+                                className="button"
+                                style={{ padding: '4px 8px', fontSize: '0.8em' }}
+                                onClick={() => {
+                                  if (!explanation) return;
+                                  navigator.clipboard.writeText(explanation).then(() => {
+                                    setCopyExplanationText('Copied!');
+                                    setTimeout(() => setCopyExplanationText('Copy Explanation'), 2000);
+                                  }).catch(_ => {
+                                    setCopyExplanationText('Copy Failed');
+                                    setTimeout(() => setCopyExplanationText('Copy Explanation'), 3000);
+                                  });
+                                }}
+                              >
+                                {copyExplanationText}
+                              </button>
+                            </div>
+                            <p style={{ whiteSpace: 'pre-wrap' }}>{explanation}</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {/* Fixed Code Block (always visible) */}
+                    {fixedCode && (
+                      <div style={{ marginTop: explanation ? '0' : '0' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                          <h2>Fixed Code</h2>
+                          <button
+                            className="button"
+                            style={{ padding: '4px 8px', fontSize: '0.8em', backgroundColor: '#28a745', color: 'white' }}
+                            onClick={handleCopyCode}
+                          >
+                            {copyButtonText}
+                          </button>
+                        </div>
+                        <pre className='result-code' style={{ whiteSpace: 'pre-wrap', background: '#1a1a1a', padding: '10px', borderRadius: '4px' }}>{fixedCode}</pre>
+                      </div>
+                    )}
+                  </div> 
+                )} 
+              </div>
 
+              <div id="settingsTab" className={`tab-content ${activeTab === 'settings' ? 'active' : ''}`}>
+                {/* Render SettingsTab, passing the session and refresh trigger */}
+                <SettingsTab session={session} refreshTrigger={refreshCounter} />
+              </div>
+
+              <div id="analyticsTab" className={`tab-content ${activeTab === 'analytics' ? 'active' : ''}`}>
+                {/* Pass counter as refreshTrigger prop */}
+                <AnalyticsTab session={session} refreshTrigger={fixSavedCounter} />
+              </div>
+
+              <div id="feedbackTab" className={`tab-content ${activeTab === 'feedback' ? 'active' : ''}`}>
+                <FeedbackTab />
+              </div>
+
+          </>
+      )}
     </div>
   );
 };

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
 import type { Session } from '@supabase/supabase-js';
 import ExtPay from 'extpay'; // Uncomment ExtPay import
@@ -20,11 +20,11 @@ type ProviderType = LlmConfiguration['provider_type'];
 const providerTypes: ProviderType[] = ['Google', 'Anthropic', 'OpenAI', 'Meta', 'DeepSeek', 'Cohere', 'Mistral', 'Alibaba', 'Other'];
 
 // Initialize ExtPay - Use your Extension ID
-const extpay = ExtPay('lightning-bolt-fix'); // Uncomment ExtPay initialization
+const extpay = ExtPay('lightning-bolt-fix'); // Updated ExtensionPay initialization
 
 interface SettingsTabProps {
   session: Session;
-  refreshTrigger: number; // Add refreshTrigger prop
+  refreshTrigger: number;
 }
 
 // Define ExtPay user structure (simplified based on docs)
@@ -41,27 +41,19 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ session, refreshTrigger }) =>
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const [freeFixesUsed, setFreeFixesUsed] = useState<number>(0); // Add state for fix count
-
-  // State for LLM configurations
+  const [freeFixesUsed, setFreeFixesUsed] = useState<number>(0);
   const [configurations, setConfigurations] = useState<LlmConfiguration[]>([]);
-  
-  // State for ExtPay status
-  const [extPayUser, setExtPayUser] = useState<ExtPayUser | null>(null); // Uncomment ExtPay user state
-  // const [isPaidUser, setIsPaidUser] = useState(false); // Remove temporary boolean state
-  // const [userEmail, setUserEmail] = useState<string | null>(null); // Remove temporary email state
-  
-  // State for managing the Add/Edit form/modal
+  const [extPayUser, setExtPayUser] = useState<ExtPayUser | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [editingConfig, setEditingConfig] = useState<LlmConfiguration | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
-  
-  // State specifically for the form inputs
   const [formModelName, setFormModelName] = useState('');
   const [formProviderType, setFormProviderType] = useState<ProviderType>('Anthropic');
   const [formApiKey, setFormApiKey] = useState('');
   const [formApiEndpoint, setFormApiEndpoint] = useState('');
-  const [formIsSaving, setFormIsSaving] = useState(false); // Loading state for form save
+  const [formIsSaving, setFormIsSaving] = useState(false);
+  const [useBuiltinKeys, setUseBuiltinKeys] = useState<boolean>(false);
+  const [useBuiltinKeysLoading, setUseBuiltinKeysLoading] = useState<boolean>(true);
 
   const MAX_CONFIGURATIONS = 5;
 
@@ -70,6 +62,32 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ session, refreshTrigger }) =>
     setError(null); // Clear previous errors
     setLoading(true); // Indicate activity
     try {
+      // 1. Release built-in API key before signing out
+      try {
+        const response = await fetch('https://szyywrcngcggimkbwbbl.functions.supabase.co/release-api-key', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`
+          },
+          body: JSON.stringify({ user_id: session.user.id })
+        });
+        if (!response.ok) {
+          const errText = await response.text();
+          console.warn('Failed to release API key on logout:', errText);
+        } else {
+          const data = await response.json();
+          if (!data.released) {
+            console.log('No built-in API key to release or already released.');
+          } else {
+            console.log('Released built-in API key:', data.releasedKey);
+          }
+        }
+      } catch (releaseErr) {
+        console.warn('Error calling release-api-key function:', releaseErr);
+        // Proceed to sign out regardless
+      }
+      // 2. Sign out
       const { error: signOutError } = await supabase.auth.signOut();
       if (signOutError) {
         throw signOutError;
@@ -84,26 +102,25 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ session, refreshTrigger }) =>
     // setLoading(false) is not needed on success because the component will unmount/change
   };
 
-  // Fetch LLM configurations and ExtPay status
-  const fetchData = useCallback(async () => {
-    // Add log at start of fetchData
-    console.log("[SettingsTab fetchData] Triggered. refreshTrigger value:", refreshTrigger);
+  // Remove useCallback wrapper from fetchData
+  const fetchData = async () => {
+    console.log("[SettingsTab fetchData] Fetching data...");
     setLoading(true);
     setError(null);
-    // Reset count before fetching
-    setFreeFixesUsed(0);
+    // Don't reset fixes used here, let the fetch update it
+    // setFreeFixesUsed(0);
     try {
-      // Fetch LLM Configurations
+      // Fetch LLM Configurations (keep as is)
       const { data: configData, error: configError } = await supabase
         .from('llm_user_configurations')
         .select('*')
         .eq('profile_id', session.user.id)
-        .order('created_at', { ascending: true }); // Order consistently
+        .order('created_at', { ascending: true });
 
       if (configError) throw new Error(`Failed to load LLM configurations: ${configError.message}`);
       setConfigurations(configData || []);
 
-      // Fetch ExtPay User Status - Uncomment block
+      // Fetch ExtPay User Status (keep as is)
       try {
           const user = await extpay.getUser();
           console.log("ExtPay User:", user);
@@ -111,52 +128,49 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ session, refreshTrigger }) =>
       } catch (extPayError: any) {
           console.error("Error fetching ExtPay user:", extPayError);
           setError("Could not retrieve payment status. Please try again later.");
-          setExtPayUser({ paid: false, email: null }); // Assume unpaid on error
+          setExtPayUser({ paid: false, email: null });
       }
 
-      /* // --- Remove Mock ExtPay Status --- Start
-      console.log("ExtPay Disabled: Assuming free user for settings display.");
-      setIsPaidUser(false); // Assume free tier
-      setUserEmail(session.user.email ?? null); // Get email from session, fallback to null
-      */ // --- Remove Mock ExtPay Status --- End
-
-      // --- Fetch Free Fix Count --- START ---
+      // Fetch Free Fix Count and use_builtin_keys flag
       const { data: profileData, error: profileError } = await supabase
           .from('profiles')
-          .select('free_fixes_used')
+          .select('free_fixes_used, use_builtin_keys')
           .eq('id', session.user.id)
-          .single<{ free_fixes_used: number }>();
+          .maybeSingle<{ free_fixes_used: number, use_builtin_keys?: boolean }>();
           
       if (profileError) {
-          // Handle profile fetch error distinctly if needed, or combine errors
-          console.error("Error fetching profile for free fix count:", profileError);
-          // Optionally set a specific error or just let the general error handling catch it
-          // setError("Could not fetch free fix count.");
-          // Rethrow or handle based on desired UX
-          throw new Error(`Failed to load profile data: ${profileError.message}`);
+          // Check if the error is because the row doesn't exist or column is null
+          if (profileError.code === 'PGRST116') { 
+              console.warn("[SettingsTab fetchData] Profile row or free_fixes_used column not found for user. Setting fixes used to 0.");
+              setFreeFixesUsed(0);
+          } else {
+              console.error("[SettingsTab fetchData] Error fetching profile:", profileError);
+              throw new Error(`Failed to load profile data: ${profileError.message}`);
+          }
+      } else {
+          // Only update if profileData is not null
+          const fixesUsed = profileData?.free_fixes_used ?? 0;
+          console.log(`[SettingsTab fetchData] Fetched profile data. free_fixes_used: ${fixesUsed}`);
+          setFreeFixesUsed(fixesUsed);
+          setUseBuiltinKeys(!!profileData?.use_builtin_keys);
+          setUseBuiltinKeysLoading(false);
       }
-      // Add log before setting state
-      console.log("[SettingsTab fetchData] Fetched profile data:", profileData);
-      setFreeFixesUsed(profileData?.free_fixes_used ?? 0);
-      // --- Fetch Free Fix Count --- END ---
 
     } catch (err: any) {
       console.error('Error fetching settings data:', err);
-      setError(err.message || 'Failed to load settings data.');
-      setConfigurations([]); // Ensure empty array on error
-      setFreeFixesUsed(0); // Reset on error
+      setError(`Failed to load settings: ${err.message}`);
+      setConfigurations([]);
+      setFreeFixesUsed(0);
     } finally {
       setLoading(false);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session.user.id, refreshTrigger]); // Add refreshTrigger to dependency array
+  };
 
-  // Fetch data on component mount and when refreshTrigger changes
+  // Update useEffect to depend directly on refreshTrigger and session.user.id
   useEffect(() => {
-    // Add log inside useEffect
-    console.log("[SettingsTab useEffect] Running due to session/trigger change. refreshTrigger:", refreshTrigger);
+    console.log("[SettingsTab useEffect] Running due to trigger/session change. refreshTrigger:", refreshTrigger);
     fetchData();
-  }, [fetchData]);
+  }, [refreshTrigger, session.user.id]); // Dependencies updated
 
   // --- Open Form Handlers ---
   const handleAddClick = () => {
@@ -368,9 +382,35 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ session, refreshTrigger }) =>
     }
   };
 
+  // Handler for toggling use_builtin_keys
+  const handleToggleBuiltinKeys = async () => {
+    setUseBuiltinKeysLoading(true);
+    const newValue = !useBuiltinKeys;
+    setUseBuiltinKeys(newValue);
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ use_builtin_keys: newValue })
+        .eq('id', session.user.id);
+      if (error) throw error;
+      setSuccessMessage('Setting updated!');
+      setTimeout(() => setSuccessMessage(null), 2000);
+    } catch (err: any) {
+      setError('Failed to update setting.');
+      setUseBuiltinKeys(!newValue); // revert
+    } finally {
+      setUseBuiltinKeysLoading(false);
+    }
+  };
+
   // --- Render Logic ---
   const isPaidUser = extPayUser?.paid === true; // Use the real ExtPay state variable again
   const isEndpointRequiredForForm = formProviderType === 'Azure OpenAI' || formProviderType === 'Other';
+
+  // Filter out the built-in Gemini config from the list
+  const userConfigs = configurations.filter(
+    (config) => !(config.provider_type === 'Google' && config.model_name.toLowerCase().includes('gemini'))
+  );
 
   return (
     <div className="box">
@@ -393,7 +433,7 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ session, refreshTrigger }) =>
             {/* Display free fix count if not a paid user */}
             {!isPaidUser && (
                 <p style={{ fontSize: '0.9em', color: '#ccc' }}>
-                    Free Fixes Used: <strong>{freeFixesUsed} / {FREE_FIX_LIMIT}</strong>
+                    Free Fixes Used: <strong>{freeFixesUsed ?? 0} / {FREE_FIX_LIMIT}</strong>
                 </p>
             )}
             {/* Uncomment original ExtPay button */}
@@ -407,22 +447,50 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ session, refreshTrigger }) =>
             </button>
             {/* Add Sign Out Button */}
             <button
-                className="button button-secondary" // Use secondary style or create a specific one
+                className="signout-link"
                 onClick={handleSignOut}
-                style={{ marginTop: '10px', marginLeft: '10px' }} // Add some spacing
-                disabled={loading} // Disable while loading/signing out
+                style={{
+                    marginTop: '10px',
+                    marginLeft: '10px',
+                    background: 'none',
+                    border: 'none',
+                    fontSize: '0.95em',
+                    textDecoration: 'underline',
+                    cursor: 'pointer',
+                    padding: 0,
+                    fontWeight: 400,
+                    color: '#eb4798', // FORCE pink color
+                    transition: 'color 0.2s'
+                }}
+                disabled={loading}
             >
-              {loading ? 'Signing Out...' : 'Sign Out'}
+                {loading ? 'Signing Out...' : 'Sign Out'}
             </button>
+            {/* Built-in API Key Toggle */}
+            <div style={{ marginTop: '15px', marginBottom: '10px', textAlign: 'left' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 500 }}>
+                <input
+                  type="checkbox"
+                  checked={useBuiltinKeys}
+                  onChange={handleToggleBuiltinKeys}
+                  disabled={useBuiltinKeysLoading || loading}
+                  style={{ accentColor: '#eb4798', width: 18, height: 18 }}
+                />
+                Use Built-in API Keys - Recommended for ALL Users.
+              </label>
+              <div style={{ fontSize: '0.85em', color: '#aaa', marginLeft: 26 }}>
+                This is enabled by default - the extension will use our built-in API keys. You do NOT need to provide your own key unless you want to. If you do want to, click the "Add New Configuration" button below.
+              </div>
+            </div>
           </div>
 
           {/* LLM Configurations Section */}
           <h3>LLM Configurations</h3>
           
           {/* Configuration List */} 
-          {!loading && configurations.length > 0 && (
+          {!loading && userConfigs.length > 0 && (
             <ul style={{ listStyle: 'none', padding: 0 }}>
-              {configurations.map((config) => (
+              {userConfigs.map((config) => (
                 <li key={config.id} style={{ border: '1px solid #444', borderRadius: '4px', padding: '10px', marginBottom: '10px', background: '#2a2a2a' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                     <strong style={{ fontSize: '1.1em' }}>{config.model_name}</strong>
@@ -451,7 +519,7 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ session, refreshTrigger }) =>
                         className="button button-danger" // Assuming a danger style
                         style={{ padding: '3px 6px', fontSize: '0.8em' }}
                         onClick={() => handleDeleteClick(config)}
-                        disabled={loading || config.is_default || configurations.length <= 1}
+                        disabled={loading || config.is_default || userConfigs.length <= 1}
                       >
                           Delete
                       </button>
@@ -465,7 +533,7 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ session, refreshTrigger }) =>
               ))}
             </ul>
           )}
-          {!loading && configurations.length === 0 && (
+          {!loading && userConfigs.length === 0 && (
             <p>No LLM configurations found. Add one below.</p>
           )}
 

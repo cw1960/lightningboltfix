@@ -1,201 +1,122 @@
-// Content script for Lightning Bolt Fix extension
-
-console.log("LBF Content Script Loaded");
-
-// --- Element Picker Logic --- 
-
-let isPickerActive = false;
-let currentPickerType = null; // 'element' or 'code'
-let highlightOverlay = null; 
-let currentTargetElement = null; 
-
-const HIGHLIGHT_STYLE = `
-  position: fixed;
-  z-index: 99999;
-  background-color: rgba(0, 136, 255, 0.3);
-  border: 1px solid rgba(0, 136, 255, 0.8);
-  border-radius: 3px;
-  pointer-events: none; 
-  transition: all 0.05s ease; 
-  display: none; 
-`;
-
-const handleMouseOver = (event) => {
-  currentTargetElement = event.target;
-  if (highlightOverlay && currentTargetElement) {
-    const rect = currentTargetElement.getBoundingClientRect();
-    highlightOverlay.style.top = `${rect.top}px`;
-    highlightOverlay.style.left = `${rect.left}px`;
-    highlightOverlay.style.width = `${rect.width}px`;
-    highlightOverlay.style.height = `${rect.height}px`;
-    highlightOverlay.style.display = 'block';
-  }
-};
-
-const handleMouseOut = (event) => {
-  if (highlightOverlay && (event.relatedTarget !== currentTargetElement || event.relatedTarget === highlightOverlay)) {
-      highlightOverlay.style.display = 'none';
-      currentTargetElement = null;
-  }
-};
-
-function activatePickerMode(pickerType) { 
-  if (isPickerActive) return; 
-  console.log(`LBF: Activating picker mode for ${pickerType}...`);
-  isPickerActive = true;
-  currentPickerType = pickerType; 
-
-  // Create/show highlight overlay
-  if (!highlightOverlay) {
-    highlightOverlay = document.createElement('div');
-    highlightOverlay.style.cssText = HIGHLIGHT_STYLE;
-    document.body.appendChild(highlightOverlay);
-  } else {
-    highlightOverlay.style.display = 'none'; 
-  }
-
-  // Add mouse listeners
-  document.addEventListener('mouseover', handleMouseOver);
-  document.addEventListener('mouseout', handleMouseOut);
-  console.log("LBF: Mouse listeners added for picker mode."); 
-}
-
-function deactivatePickerMode() {
-  console.log("LBF: deactivatePickerMode called."); 
-  if (!isPickerActive) return; 
-  console.log("LBF: Deactivating picker mode...");
-
-  // Remove mouse listeners
-  document.removeEventListener('mouseover', handleMouseOver);
-  document.removeEventListener('mouseout', handleMouseOut);
-
-  // Hide/remove highlightOverlay
-  if (highlightOverlay) {
-    highlightOverlay.style.display = 'none'; 
-  }
-
-  currentTargetElement = null;
-  isPickerActive = false;
-  currentPickerType = null; 
-}
-
-// Click handler specifically for ERROR MESSAGE picking
-const handleElementClick = (event) => {
-   if (!isPickerActive || currentPickerType !== 'element') return; 
-   console.log(`LBF: Click intercepted for [${currentPickerType}]:`, event.target);
-   event.preventDefault();
-   event.stopPropagation();
-   
-   const clickedElement = event.target;
-   const text = clickedElement.textContent?.trim() || ''; 
-   console.log("LBF: Captured element text (textContent):", text);
-   
-   const messageType = 'ELEMENT_PICKED'; 
-   
-   chrome.runtime.sendMessage({ type: messageType, payload: text }, (response) => {
-       if (chrome.runtime.lastError) {
-           console.error(`LBF: Error sending ${messageType} message:`, chrome.runtime.lastError.message || chrome.runtime.lastError);
-       } else {
-           console.log(`LBF: ${messageType} message sent successfully. Response:`, response);
-       }
-   });
-
-   deactivatePickerMode(); 
-};
-
-// Click handler specifically for PLAN picking
-const handlePlanElementClick = (event) => {
-  if (!isPickerActive || currentPickerType !== 'plan') return;
-  console.log(`LBF: Click intercepted for [${currentPickerType}]:`, event.target);
-  event.preventDefault();
-  event.stopPropagation();
-  
-  const clickedElement = event.target;
-  // For plan, consider using innerText which respects line breaks better, or outerHTML if structure is needed
-  const text = clickedElement.innerText?.trim() || clickedElement.textContent?.trim() || ''; 
-  console.log("LBF: Captured plan text (innerText or textContent):", text);
-  
-  const messageType = 'PLAN_ELEMENT_PICKED'; // Different message type
-  
-  chrome.runtime.sendMessage({ type: messageType, payload: text }, (response) => {
-      if (chrome.runtime.lastError) {
-          console.error(`LBF: Error sending ${messageType} message:`, chrome.runtime.lastError.message || chrome.runtime.lastError);
-      } else {
-          console.log(`LBF: ${messageType} message sent successfully. Response:`, response);
-      }
-  });
-
-  deactivatePickerMode();
-};
-
-// Listener for messages from the Side Panel (MainApp)
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  console.log("LBF Content Script received message:", message);
-  
-  if (message.type === 'START_ELEMENT_PICKING') {
-    activatePickerMode('element');
-    document.addEventListener('click', handleElementClick, { capture: true, once: true }); 
-    sendResponse({ status: "Element picking started" });
-    return true; // Keep channel open for potential async response (though unlikely needed here)
-  }
-
-  if (message.type === 'START_PLAN_ELEMENT_PICKING') {
-    activatePickerMode('plan'); 
-    // Add the specific click listener for the plan picker
-    document.addEventListener('click', handlePlanElementClick, { capture: true, once: true }); 
-    sendResponse({ status: "Plan picking started" });
-    return false; 
-  } 
-  
-  return false; 
-});
-
-// --- Signal Readiness --- 
-// Send a message to the background script indicating the content script is ready to receive messages
-console.log("LBF: Content script attempting to signal readiness to background.");
-chrome.runtime.sendMessage({ type: 'CONTENT_SCRIPT_READY' }, (response) => {
-    if (chrome.runtime.lastError) {
-        console.error("LBF: Error signaling readiness:", chrome.runtime.lastError.message || chrome.runtime.lastError);
-    } else {
-        console.log("LBF: Successfully signaled readiness to background. Response:", response);
+"use strict";
+console.log("Content script loaded.");
+let isPicking = false;
+let pickingMode = null;
+let lastHighlighted = null;
+function highlightElement(el) {
+    if (lastHighlighted && lastHighlighted !== el) {
+        lastHighlighted.style.removeProperty('outline');
+        lastHighlighted.style.removeProperty('background-color');
     }
-});
-
-// --- Mutation Observer (for potential future automatic error detection) ---
-
-// NOTE: This observer is currently configured to look for conversational 
-// 'Potential problems detected.' messages (h4 tag). 
-// It's not actively used by the element picker but kept for potential future use.
-
-function checkForProblemDetection(node) {
-  // Check if the node itself is the target h4
-  if (node.matches && node.matches('h4') && node.textContent?.includes('Potential problems detected.')) {
-    console.log("LBF: (Observer) 'Potential problems detected.' found directly in node:", node);
-  return true;
-}
-
-  // Check if any descendant is the target h4
-  if (node.querySelector) {
-    const problemH4 = node.querySelector('h4'); 
-    if (problemH4 && problemH4.textContent?.includes('Potential problems detected.')) {
-      console.log("LBF: (Observer) 'Potential problems detected.' found in descendant H4:", problemH4);
-      return true; 
+    if (el) {
+        el.style.setProperty('outline', '3px dashed #3b82f6', 'important');
+        el.style.setProperty('background-color', 'rgba(255, 182, 193, 0.25)', 'important');
+        lastHighlighted = el;
     }
-  }
-  return false; 
+    else {
+        lastHighlighted = null;
+    }
 }
-
-const observer = new MutationObserver((mutationsList) => {
-  for (const mutation of mutationsList) {
-    if (mutation.type === 'childList') {
-      mutation.addedNodes.forEach(node => {
-        if (node.nodeType === Node.ELEMENT_NODE && checkForProblemDetection(node)) {
-           console.log("LBF: (Observer) 'Potential problems detected.' processed by observer.");
+function handleMouseOver(event) {
+    if (!isPicking)
+        return;
+    const el = event.target;
+    highlightElement(el);
+}
+function handleMouseOut(event) {
+    if (!isPicking)
+        return;
+    const el = event.target;
+    if (el === lastHighlighted) {
+        highlightElement(null);
+    }
+}
+function handleElementClick(event) {
+    if (!isPicking || !pickingMode)
+        return;
+    event.preventDefault();
+    event.stopPropagation();
+    const targetElement = event.target;
+    const elementText = targetElement.innerText || targetElement.textContent || '';
+    console.log(`Content script: Picked element for ${pickingMode}:`, elementText);
+    const messageType = pickingMode === 'error' ? 'ELEMENT_PICKED' : 'PLAN_ELEMENT_PICKED';
+    chrome.runtime.sendMessage({ type: messageType, payload: elementText });
+    stopPickingMode();
+}
+function startPickingMode(mode) {
+    if (isPicking)
+        return;
+    console.log(`Content script: Starting ${mode} picking mode.`);
+    isPicking = true;
+    pickingMode = mode;
+    document.body.style.setProperty('cursor', 'pointer', 'important');
+    document.addEventListener('click', handleElementClick, true);
+    document.addEventListener('mouseover', handleMouseOver, true);
+    document.addEventListener('mouseout', handleMouseOut, true);
+}
+function stopPickingMode() {
+    if (!isPicking)
+        return;
+    console.log("Content script: Stopping picking mode.");
+    isPicking = false;
+    pickingMode = null;
+    document.body.style.setProperty('cursor', 'default', 'important');
+    document.removeEventListener('click', handleElementClick, true);
+    document.removeEventListener('mouseover', handleMouseOver, true);
+    document.removeEventListener('mouseout', handleMouseOut, true);
+    highlightElement(null);
+}
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    console.log("Content script: Listener invoked.");
+    if (message) {
+        console.log("Content script: Message object exists.");
+        try {
+            const msgType = message.type;
+            console.log("Content script: Message type is:", msgType);
         }
-      });
+        catch (e) {
+            console.error("Content script: ERROR accessing message.type:", e);
+        }
     }
-  }
+    else {
+        console.log("Content script: Message object is null or undefined.");
+        return false;
+    }
+    if (message.type === 'CHECK_CONTENT_SCRIPT_READY') {
+        console.log("Content script: Matched CHECK_CONTENT_SCRIPT_READY");
+        sendResponse({ ready: true });
+        return true;
+    }
+    else if (message.type === 'START_ELEMENT_PICKING') {
+        console.log("Content script: Matched START_ELEMENT_PICKING");
+        startPickingMode('error');
+        sendResponse({ status: "Error picking mode started" });
+        return true;
+    }
+    else if (message.type === 'START_PLAN_ELEMENT_PICKING') {
+        console.log("Content script: Matched START_PLAN_ELEMENT_PICKING");
+        startPickingMode('plan');
+        sendResponse({ status: "Plan picking mode started" });
+        return true;
+    }
+    else {
+        console.warn(`Content script: Message type '${message?.type}' did not match any known handlers.`);
+    }
+    console.log("Content script: Message handler falling through (may indicate an unhandled message or error).");
+    return false;
 });
-
-observer.observe(document.body, { childList: true, subtree: true });
-console.log("LBF: MutationObserver started on document body (looking for problems detected text).");
+setTimeout(() => {
+    try {
+        chrome.runtime.sendMessage({ type: "CONTENT_SCRIPT_READY" }, (response) => {
+            if (chrome.runtime.lastError) {
+                console.warn("Content script: Could not send readiness message to background: ", chrome.runtime.lastError.message);
+            }
+            else {
+                console.log("Content script: Sent readiness message to background.", response);
+            }
+        });
+    }
+    catch (e) {
+        console.warn("Content script: Error sending readiness message: ", e);
+    }
+}, 500);

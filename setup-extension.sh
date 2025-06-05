@@ -5,7 +5,7 @@ mkdir -p dist/icons
 
 # Create background.js
 cat > dist/background.js << 'EOF'
-// Background script for Lightning Bolt Fix extension
+// Background script for Lightning Bolt Fix V3 extension
 
 // Listen for messages from the content script or popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -165,7 +165,7 @@ EOF
 
 # Create content.js
 cat > dist/content.js << 'EOF'
-// Content script for Lightning Bolt Fix extension
+// Content script for Lightning Bolt Fix V3 extension
 
 // Listen for messages from the extension
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -265,8 +265,8 @@ EOF
 cat > dist/manifest.json << 'EOF'
 {
   "manifest_version": 3,
-  "name": "Lightning Bolt Fix",
-  "version": "1.0.0",
+  "name": "Lightning Bolt Fix V3",
+  "version": "3.1.1",
   "description": "Fix Bolt.new errors using external LLMs with your own API keys",
   "side_panel": {
     "default_path": "sidepanel.html"
@@ -319,7 +319,7 @@ cat > dist/sidepanel.html << 'EOF'
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Lightning Bolt Fix</title>
+  <title>Lightning Bolt Fix V3</title>
   <link rel="stylesheet" href="assets/index-D8b4DHJx.css">
 </head>
 <body>
@@ -332,4 +332,4 @@ EOF
 # Create placeholder icon files
 touch dist/icons/icon16.png dist/icons/icon48.png dist/icons/icon128.png
 
-echo "Extension files created successfully!"
+echo "Extension files for Lightning Bolt Fix V3 created successfully!"

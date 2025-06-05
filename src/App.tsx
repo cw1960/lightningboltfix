@@ -27,6 +27,7 @@ function App() {
   const [session, setSession] = useState<Session | null>(null)
   const [appStatus, setAppStatus] = useState<AppStatus>('LOADING');
   const [profileErrorMsg, setProfileErrorMsg] = useState<string | null>(null); // Optional: specific error message
+  const [apiKey, setApiKey] = useState<string | null>(null); // Store the assigned API key
 
   // Function to check profile and determine next status
   const checkProfileAndSetStatus = async (currentSession: Session) => {
@@ -35,18 +36,21 @@ function App() {
       setAppStatus('LOADING'); // Indicate profile check is happening
       setProfileErrorMsg(null);
 
-      const { data: profile, error } = await supabase
+      const USER_ID_COLUMN = 'id'; // Change this to match your DB if needed (e.g., 'user_id')
+      const { data: profiles, error } = await supabase
         .from('profiles')
         .select('onboarding_complete')
-        .eq('id', currentSession.user.id)
-        .single();
+        .eq(USER_ID_COLUMN, currentSession.user.id)
+        .limit(1);
 
-      if (error && error.code !== 'PGRST116') { // Handle actual errors
-          console.error("Error fetching profile:", error);
-          throw new Error("Failed to fetch user profile."); // Throw to be caught below
+      if (error) {
+        console.error("Error fetching profile:", error);
+        alert("Supabase error: " + JSON.stringify(error));
+        throw new Error("Failed to fetch user profile.");
       }
 
       // If profile exists and onboarding is complete
+      const profile = profiles && profiles.length > 0 ? profiles[0] : null;
       if (profile?.onboarding_complete) {
           console.log("Onboarding complete, setting status to READY");
           setAppStatus('READY');
@@ -69,62 +73,87 @@ function App() {
     setAppStatus('READY'); 
   };
 
+  // Helper to call the Edge Function and fetch the user's profile
+  const assignAndFetchApiKey = async (userId: string) => {
+    try {
+      // 1. Call the Edge Function to assign the least-used API key
+      await fetch('https://szyywrcngcggimkbwbbl.functions.supabase.co/get-api-key', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token}` // Add JWT for Supabase Edge Function
+        },
+        body: JSON.stringify({ user_id: userId }),
+      });
+      // 2. Fetch the user's profile to get the assigned key
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('default_llm')
+        .eq('id', userId)
+        .single();
+      if (error) {
+        setApiKey(null);
+        console.error('Error fetching profile for API key:', error);
+      } else {
+        setApiKey(data?.default_llm || null);
+        console.log('Fetched assigned API key:', data?.default_llm);
+        if (data?.default_llm) {
+          console.log('API key is available for use:', data.default_llm);
+        }
+      }
+    } catch (_) {
+      setApiKey(null);
+      // Error is intentionally ignored here
+    }
+  };
+
   // --- Auth Setup Effect --- 
   useEffect(() => {
     setAppStatus('LOADING'); // Initial status
-    
-    // Initial session check
     supabase.auth.getSession().then(({ data: { session: initialSession } }) => {
-      console.log("Initial session fetched:", initialSession);
       setSession(initialSession);
       if (!initialSession) {
         setAppStatus('AUTH_REQUIRED');
-      } 
-      // If session exists, the effect below will trigger the profile check
-    }).catch(err => {
-      console.error("Error getting initial session:", err);
+      }
+    }).catch(_ => {
       setSession(null);
-      setAppStatus('AUTH_REQUIRED'); // Go to auth on error
+      setAppStatus('AUTH_REQUIRED');
     });
-
-    // Auth state change listener
     const { data: authListener } = supabase.auth.onAuthStateChange(
       (_event, newSession) => {
-        console.log("Auth state changed event:", _event, newSession);
         const sessionChanged = newSession?.access_token !== session?.access_token;
         setSession(newSession);
         if (!newSession) {
-            setAppStatus('AUTH_REQUIRED');
+          setAppStatus('AUTH_REQUIRED');
         } else if (sessionChanged) {
-             // If session changed (e.g. login/logout), trigger profile check
-            // The effect below handles this based on session change
-            setAppStatus('LOADING'); // Reset to loading before profile check
-        } 
-        // If only profile data changed (handled by onOnboardingComplete), session remains same, no status change here
+          setAppStatus('LOADING');
+        }
       }
     );
-
     return () => {
       authListener?.subscription.unsubscribe();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Run only once on mount
+  }, []);
 
-  // --- Effect to Check Profile based on Session --- 
+  // --- Effect to Check Profile and Assign API Key --- 
   useEffect(() => {
-    console.log("Session effect triggered. Session:", session, "Status:", appStatus);
-    if (session && appStatus === 'LOADING') {
-      // Only check profile if we have a session AND we are in a loading state 
-      // (implies we just got the session or auth state changed)
-      checkProfileAndSetStatus(session);
-    } else if (!session && appStatus !== 'AUTH_REQUIRED') {
-        // If session becomes null unexpectedly, force Auth screen
-        setAppStatus('AUTH_REQUIRED');
+    if (session) {
+      setAppStatus('LOADING');
+      assignAndFetchApiKey(session.user.id).then(() => {
+        checkProfileAndSetStatus(session);
+      });
+    } else {
+      setAppStatus('AUTH_REQUIRED');
     }
-  // We only want this effect to run when the session object *reference* changes OR if appStatus becomes LOADING
-  // eslint-disable-next-line react-hooks/exhaustive-deps 
-  }, [session, appStatus]); 
+  }, [session]);
 
+  // Use apiKey somewhere to avoid TS error (for now, just log it)
+  useEffect(() => {
+    if (apiKey) {
+      console.log('apiKey in App:', apiKey);
+    }
+  }, [apiKey]);
 
   // --- Render Logic --- 
   const renderContent = () => {

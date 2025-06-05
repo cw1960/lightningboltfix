@@ -4,6 +4,34 @@ console.log("Content script loaded.");
 let isPicking = false;
 let pickingMode: 'error' | 'plan' | null = null; // Track what we are picking for
 
+// --- Highlight logic ---
+let lastHighlighted: HTMLElement | null = null;
+function highlightElement(el: HTMLElement | null) {
+    if (lastHighlighted && lastHighlighted !== el) {
+        lastHighlighted.style.removeProperty('outline');
+        lastHighlighted.style.removeProperty('background-color');
+    }
+    if (el) {
+        el.style.setProperty('outline', '3px dashed #3b82f6', 'important'); // medium, dashed blue border
+        el.style.setProperty('background-color', 'rgba(255, 182, 193, 0.25)', 'important'); // soft pink background (lightpink)
+        lastHighlighted = el;
+    } else {
+        lastHighlighted = null;
+    }
+}
+function handleMouseOver(event: MouseEvent) {
+    if (!isPicking) return;
+    const el = event.target as HTMLElement;
+    highlightElement(el);
+}
+function handleMouseOut(event: MouseEvent) {
+    if (!isPicking) return;
+    const el = event.target as HTMLElement;
+    if (el === lastHighlighted) {
+        highlightElement(null);
+    }
+}
+
 // --- Function to handle element selection ---
 function handleElementClick(event: MouseEvent) {
     if (!isPicking || !pickingMode) return;
@@ -30,8 +58,10 @@ function startPickingMode(mode: 'error' | 'plan') {
     console.log(`Content script: Starting ${mode} picking mode.`);
     isPicking = true;
     pickingMode = mode;
-    document.body.style.cursor = 'crosshair';
+    document.body.style.setProperty('cursor', 'pointer', 'important'); // Use pointer cursor with !important
     document.addEventListener('click', handleElementClick, true); // Use capture phase
+    document.addEventListener('mouseover', handleMouseOver, true);
+    document.addEventListener('mouseout', handleMouseOut, true);
 }
 
 // --- Function to stop picking mode ---
@@ -40,8 +70,11 @@ function stopPickingMode() {
     console.log("Content script: Stopping picking mode.");
     isPicking = false;
     pickingMode = null;
-    document.body.style.cursor = 'default';
+    document.body.style.setProperty('cursor', 'default', 'important'); // Reset to default cursor with !important
     document.removeEventListener('click', handleElementClick, true);
+    document.removeEventListener('mouseover', handleMouseOver, true);
+    document.removeEventListener('mouseout', handleMouseOut, true);
+    highlightElement(null); // Remove highlight
 }
 
 // --- Message Listener from Background/Popup ---

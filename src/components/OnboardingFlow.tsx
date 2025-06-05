@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
 import type { Session } from '@supabase/supabase-js';
 
@@ -11,18 +11,48 @@ interface OnboardingFlowProps {
 type ProviderType = 'Anthropic' | 'Google' | 'OpenAI' | 'Azure OpenAI' | 'Meta' | 'DeepSeek' | 'Cohere' | 'Mistral' | 'Alibaba' | 'Other';
 const providerTypes: ProviderType[] = ['Google', 'Anthropic', 'OpenAI', 'Meta', 'DeepSeek', 'Cohere', 'Mistral', 'Alibaba', 'Other'];
 
+const YOUTUBE_URL = 'https://youtu.be/zWlzxSXmpxY'; // Replace with actual URL
+
 const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ session, onOnboardingComplete }) => {
   // Step 1: Collect LLM Config, Step 2: Instructions
-  const [currentStep, setCurrentStep] = useState(1);
+  const [currentStep, setCurrentStep] = useState(() => {
+    // Try to restore step from localStorage
+    const savedStep = localStorage.getItem('onboarding_step');
+    return savedStep ? parseInt(savedStep, 10) : 1;
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // State for the single default LLM configuration
-  // Default Model Name and Provider Type to Google Gemini Flash
-  const [modelName, setModelName] = useState('Google Gemini 2.0 Flash (Free Tier)');
-  const [providerType, setProviderType] = useState<ProviderType>('Google'); 
-  const [apiKey, setApiKey] = useState('');
-  const [apiEndpoint, setApiEndpoint] = useState(''); // Optional endpoint
+  // State for the single default LLM configuration with localStorage persistence
+  const [modelName, setModelName] = useState(() => {
+    return localStorage.getItem('onboarding_model_name') || 'Google Gemini 2.0 Flash (Free Tier)';
+  });
+  const [providerType, setProviderType] = useState<ProviderType>(() => {
+    return (localStorage.getItem('onboarding_provider_type') as ProviderType) || 'Google';
+  });
+  const [apiKey, setApiKey] = useState(() => {
+    return localStorage.getItem('onboarding_api_key') || '';
+  });
+  const [apiEndpoint, setApiEndpoint] = useState(() => {
+    return localStorage.getItem('onboarding_api_endpoint') || '';
+  });
+  const [useBuiltinKeys, setUseBuiltinKeys] = useState(() => providerType === 'Google');
+  const [showCustomLlm, setShowCustomLlm] = useState(false);
+
+  // Effect to save form data to localStorage whenever it changes
+  useEffect(() => {
+    localStorage.setItem('onboarding_step', currentStep.toString());
+    localStorage.setItem('onboarding_model_name', modelName);
+    localStorage.setItem('onboarding_provider_type', providerType);
+    localStorage.setItem('onboarding_api_key', apiKey);
+    localStorage.setItem('onboarding_api_endpoint', apiEndpoint);
+  }, [currentStep, modelName, providerType, apiKey, apiEndpoint]);
+
+  // Effect to update useBuiltinKeys default if providerType changes
+  useEffect(() => {
+    if (providerType === 'Google') setUseBuiltinKeys(true);
+    else setUseBuiltinKeys(false);
+  }, [providerType]);
 
   // Determine if endpoint is required based on provider type
   const isEndpointRequired = providerType === 'Azure OpenAI' || providerType === 'Other';
@@ -34,13 +64,16 @@ const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ session, onOnboardingCo
     if (currentStep < totalSteps) {
         // Validation for Step 1 (LLM Configuration)
         if (currentStep === 1) {
-            if (!modelName || !providerType || !apiKey) {
-                setError('Please fill in Model Name, select Provider Type, and provide the API Key.');
-                return;
-            }
-            if (isEndpointRequired && !apiEndpoint) {
-                setError('API Endpoint is required for Azure OpenAI and Other provider types.');
-                return;
+            // Only validate fields if user is configuring their own LLM
+            if (showCustomLlm) {
+                if (!modelName || !providerType || !apiKey) {
+                    setError('Please fill in Model Name, select Provider Type, and provide the API Key.');
+                    return;
+                }
+                if (isEndpointRequired && !apiEndpoint) {
+                    setError('API Endpoint is required for Azure OpenAI and Other provider types.');
+                    return;
+                }
             }
         }
         setError(null); // Clear error on successful navigation
@@ -56,63 +89,69 @@ const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ session, onOnboardingCo
   };
 
   const handleFinishOnboarding = async () => {
-    // Final validation (redundant if nextStep validation works, but good practice)
-     if (!modelName || !providerType || !apiKey || (isEndpointRequired && !apiEndpoint)) {
+    // Validation: Only require LLM fields if showCustomLlm is true
+    if (showCustomLlm) {
+      if (!modelName || !providerType || !apiKey || (isEndpointRequired && !apiEndpoint)) {
         setError('Please ensure all required fields are filled correctly.');
-        setCurrentStep(1); // Go back to config step
+        setCurrentStep(1);
         return;
-     }
-
+      }
+    }
     setLoading(true);
     setError(null);
     try {
-      // Insert the new LLM configuration
-      const { error: insertError } = await supabase
-        .from('llm_user_configurations')
-        .insert({
-          profile_id: session.user.id,
-          provider_type: providerType,
-          model_name: modelName,
-          api_key: apiKey,
-          api_endpoint: isEndpointRequired ? apiEndpoint : null, // Only save if required
-          is_default: true // This first one is the default
-        });
-
-      if (insertError) throw insertError;
-
-      // Update the profile to mark onboarding as complete
+      // Insert the new LLM configuration only if custom is enabled
+      if (showCustomLlm) {
+        const { error: insertError } = await supabase
+          .from('llm_user_configurations')
+          .insert({
+            profile_id: session.user.id,
+            provider_type: providerType,
+            model_name: modelName,
+            api_key: apiKey,
+            api_endpoint: isEndpointRequired ? apiEndpoint : null,
+            is_default: true
+          });
+        if (insertError) throw insertError;
+      }
+      // Update the profile to mark onboarding as complete and set use_builtin_keys
       const { error: updateError } = await supabase
         .from('profiles')
         .update({
           onboarding_complete: true,
-          // We no longer store default_llm here directly
+          use_builtin_keys: !showCustomLlm && useBuiltinKeys
         })
         .eq('id', session.user.id);
-
-        if (updateError) {
-            // Attempt to roll back the LLM config insertion if profile update fails?
-            // For simplicity now, just log and report the error.
-            console.error('Failed to mark onboarding complete after saving LLM config:', updateError);
-            throw new Error('Failed to finalize onboarding.');
-        }
-
-      // Call the callback to signal completion to App.tsx
+      if (updateError) {
+        console.error('Failed to mark onboarding complete after saving LLM config:', updateError);
+        throw new Error('Failed to finalize onboarding.');
+      }
+      // Clear localStorage after successful onboarding
+      localStorage.removeItem('onboarding_step');
+      localStorage.removeItem('onboarding_model_name');
+      localStorage.removeItem('onboarding_provider_type');
+      localStorage.removeItem('onboarding_api_key');
+      localStorage.removeItem('onboarding_api_endpoint');
       onOnboardingComplete();
       console.log("Onboarding finished, called onOnboardingComplete callback.");
-
     } catch (err: any) {
       console.error('Finish Onboarding Error:', err);
-      // Check for unique constraint violation (duplicate model name for user)
-      if (err.code === '23505') { // PostgreSQL unique violation code
+      if (err.code === '23505') {
         setError(`You already have a configuration named "${modelName}". Please choose a different name.`);
-        setCurrentStep(1); // Go back to config step
+        setCurrentStep(1);
       } else {
         setError(err.error_description || err.message || 'Failed to save onboarding data');
       }
     } finally {
       // Loading state is managed by App.tsx after callback
-      // setLoading(false);
     }
+  };
+
+  // Function to open video in a new window
+  const openVideoInNewWindow = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const videoWindow = window.open(YOUTUBE_URL, '_blank', 'noopener,noreferrer');
+    if (videoWindow) videoWindow.focus();
   };
 
   // --- Render Logic ---
@@ -122,96 +161,138 @@ const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ session, onOnboardingCo
         return (
           <div className="box">
             <h2>Configure Your Default LLM</h2>
-            <p>We STRONGLY recommend that you use Google Gemini 2.0 Flash (Free Tier), however, you may use any LLM model you wish by providing the details below. You may add other LLM models in the "Settings" tab later.</p>
-
-            {/* Provider Type - Moved Up */}
-            <div className="form-group">
-                <label htmlFor="onboardingProviderType">Provider Type *</label>
-                <select
+            <p>
+              We STRONGLY recommend that you use the default LLM model that we have already checked for you below (see the pink checkbox).  However, if you wish to use your own LLM model and your own API key, you may do so by clicking on the "Configure My Own LLM" checkbox and providing the requested information.
+            </p>
+            {/* Pink Built-in API Key Checkbox (always visible, at the top) */}
+            <div className="form-group" style={{ marginTop: '10px', marginBottom: '10px' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 500 }}>
+                <input
+                  type="checkbox"
+                  checked={useBuiltinKeys}
+                  onChange={() => setUseBuiltinKeys(v => !v)}
+                  disabled={showCustomLlm || loading}
+                  style={{ accentColor: '#eb4798', width: 18, height: 18 }}
+                />
+                Use Built-in API Keys (Recommended for Free Users)
+              </label>
+              <div style={{ fontSize: '0.85em', color: '#aaa', marginLeft: 26 }}>
+                When enabled, the extension will use a built-in API key. You do NOT need to provide your own key.
+              </div>
+            </div>
+            {/* Configure My Own LLM Checkbox */}
+            <div className="form-group" style={{ marginTop: '10px', marginBottom: '10px' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 500 }}>
+                <input
+                  type="checkbox"
+                  checked={showCustomLlm}
+                  onChange={() => setShowCustomLlm(v => !v)}
+                  disabled={loading}
+                  style={{ accentColor: '#60a5fa', width: 18, height: 18 }}
+                />
+                Configure My Own LLM
+              </label>
+              <div style={{ fontSize: '0.85em', color: '#aaa', marginLeft: 26 }}>
+                If you wish to use your own LLM model and API key, check this box and fill out the details below.
+              </div>
+            </div>
+            {/* Accordion for custom LLM fields */}
+            {showCustomLlm && (
+              <div style={{ border: '1px solid #444', borderRadius: '6px', padding: '16px', marginTop: '10px', background: '#23272f' }}>
+                {/* Provider Type */}
+                <div className="form-group">
+                  <label htmlFor="onboardingProviderType">Provider Type *</label>
+                  <select
                     id="onboardingProviderType"
-                    className="input" // Use 'input' class for similar styling or create a 'select' class
+                    className="input"
                     value={providerType}
                     onChange={(e) => setProviderType(e.target.value as ProviderType)}
                     disabled={loading}
                     required
-                >
+                  >
                     {providerTypes.map(type => (
-                        <option key={type} value={type}>{type}</option>
+                      <option key={type} value={type}>{type}</option>
                     ))}
-                </select>
-            </div>
-
-            {/* Model Name - Moved Down */}
-            <div className="form-group">
-              <label htmlFor="onboardingModelName">Model Name *</label>
-              <input
-                type="text"
-                id="onboardingModelName"
-                className="input"
-                placeholder={providerType === 'Google' ? "Defaults to Gemini 2.0 Flash" : "e.g., My Claude Sonnet"}
-                value={modelName}
-                onChange={(e) => setModelName(e.target.value)}
-                disabled={loading}
-                required
-              />
-              {/* Suggestion for Google */}
-              {providerType === 'Google' && !modelName && (
-                 <p style={{ fontSize: '0.8em', color: '#aaa', marginTop: '5px' }}>
-                    We recommend keeping the default name or similar for clarity.
-                 </p>
-              )}
-            </div>
-
-            {/* API Key */}
-            <div className="form-group">
-              <label htmlFor="onboardingApiKey">API Key *</label>
-              <input
-                type="password"
-                id="onboardingApiKey"
-                className="input"
-                placeholder={providerType === 'Google' ? "Paste your Google AI Studio key here" : "sk-... or AIzaSy... etc."}
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                disabled={loading}
-                required
-              />
-              {/* Instructions specifically for Google */}
-              {providerType === 'Google' && (
-                <p style={{ fontSize: '0.8em', color: '#aaa', marginTop: '5px' }}>
-                  Get your free API key from Google API Studio. This allows the extension to use the free Gemini 2.0 Flash LLM. If you need help on how to get this API, please visit <a href="https://lightningboltfix.com/get-gemini-key" target="_blank" rel="noopener noreferrer" style={{ color: '#60a5fa' }}>https://lightningboltfix.com/get-gemini-key</a>
-                </p>
-              )}
-            </div>
-
-            {/* API Endpoint (Conditional) */}
-            {isEndpointRequired && (
-                <div className="form-group">
-                <label htmlFor="onboardingApiEndpoint">API Endpoint *</label>
-                <input
-                    type="text" // Consider type="url" for basic browser validation
-                    id="onboardingApiEndpoint"
-                    className="input"
-                    placeholder="Enter the full API endpoint URL"
-                    value={apiEndpoint}
-                    onChange={(e) => setApiEndpoint(e.target.value)}
-                    disabled={loading}
-                    required={isEndpointRequired} // HTML5 validation
-                />
-                <p style={{ fontSize: '0.8em', color: '#aaa', marginTop: '5px' }}>
-                    Required for Azure OpenAI and Other providers.
-                </p>
+                  </select>
                 </div>
+                {/* Model Name */}
+                <div className="form-group">
+                  <label htmlFor="onboardingModelName">Model Name *</label>
+                  <input
+                    type="text"
+                    id="onboardingModelName"
+                    className="input"
+                    placeholder={providerType === 'Google' ? "Defaults to Gemini 2.0 Flash" : "e.g., My Claude Sonnet"}
+                    value={modelName}
+                    onChange={(e) => setModelName(e.target.value)}
+                    disabled={loading}
+                    required
+                  />
+                  {providerType === 'Google' && !modelName && (
+                    <p style={{ fontSize: '0.8em', color: '#aaa', marginTop: '5px' }}>
+                      We recommend keeping the default name or similar for clarity.
+                    </p>
+                  )}
+                </div>
+                {/* API Key */}
+                <div className="form-group">
+                  <label htmlFor="onboardingApiKey">API Key *</label>
+                  <input
+                    type="password"
+                    id="onboardingApiKey"
+                    className="input"
+                    placeholder={providerType === 'Google' ? "Paste your Google AI Studio key here" : "sk-... or AIzaSy... etc."}
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    disabled={loading}
+                    required
+                  />
+                  {providerType === 'Google' && (
+                    <p style={{ fontSize: '0.8em', color: '#aaa', marginTop: '5px' }}>
+                      Get your free API key from Google API Studio. This allows the extension to use the free Gemini 2.0 Flash LLM. If you need help on how to get this API, please visit <a href="https://lightningboltfix.com/get-gemini-key" target="_blank" rel="noopener noreferrer" style={{ color: '#60a5fa' }}>https://lightningboltfix.com/get-gemini-key</a>
+                    </p>
+                  )}
+                </div>
+                {/* API Endpoint (Conditional) */}
+                {isEndpointRequired && (
+                  <div className="form-group">
+                    <label htmlFor="onboardingApiEndpoint">API Endpoint *</label>
+                    <input
+                      type="text"
+                      id="onboardingApiEndpoint"
+                      className="input"
+                      placeholder="Enter the full API endpoint URL"
+                      value={apiEndpoint}
+                      onChange={(e) => setApiEndpoint(e.target.value)}
+                      disabled={loading}
+                      required={isEndpointRequired}
+                    />
+                    <p style={{ fontSize: '0.8em', color: '#aaa', marginTop: '5px' }}>
+                      Required for Azure OpenAI and Other providers.
+                    </p>
+                  </div>
+                )}
+              </div>
             )}
-
           </div>
         );
       case 2: // Instructions (Old Step 3 is now Step 2)
         return (
           <div className="box">
-            <h2>How to Use Lightning Bolt Fix</h2>
+            <h2>How to Use Lightning Bolt Fix V3</h2>
+            {/* Demo Video Button (only in Step 2) */}
+            <div style={{ textAlign: 'center', marginBottom: 16 }}>
+              <button
+                className="button"
+                style={{ marginTop: 8 }}
+                onClick={openVideoInNewWindow}
+              >
+                Watch Demo Video
+              </button>
+            </div>
             <ol style={{ paddingLeft: '20px', listStyle: 'decimal' }}>
               <li>Navigate to a Bolt.new project.</li>
-              <li>When you encounter an error, click the Lightning Bolt Fix icon in your browser toolbar.</li>
+              <li>When you encounter an error, click the Lightning Bolt Fix V3 icon in your browser toolbar.</li>
               {/*<li>Use the \"Pick Element\" button to select the error message on the page, or paste it manually.</li>*/}
               <li>Select text containing the error message on the page.</li>
               <li>Click the "Capture Selection" button in the side panel.</li>
@@ -231,8 +312,8 @@ const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ session, onOnboardingCo
 
   return (
     <div className="onboarding-container">
-       <img src="https://i.imgur.com/SZyvR08.png" alt="Lightning Bolt Fix Logo" style={{ width: '90px', height: '90px', display: 'block', margin: '0 auto 20px auto' }} />
-      <h1>Welcome to Lightning Bolt Fix!</h1>
+       <img src="icons/icon128.png" alt="Lightning Bolt Fix V3 Logo" style={{ width: '90px', height: '90px', display: 'block', margin: '0 auto 20px auto' }} />
+      <h1>Welcome to Lightning Bolt Fix V3!</h1>
       <p>Let's get you set up.</p>
 
       {/* Step Indicator */}
@@ -249,7 +330,7 @@ const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ session, onOnboardingCo
       {/* Navigation Buttons */}
       <div className="navigation-buttons" style={{ marginTop: '20px', display: 'flex', justifyContent: 'space-between' }}>
         <button
-          className="button button-secondary" // Add appropriate classes
+          className="button button-secondary"
           onClick={prevStep}
           disabled={currentStep === 1 || loading}
         >
@@ -257,7 +338,7 @@ const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ session, onOnboardingCo
         </button>
         {currentStep < totalSteps ? (
           <button
-            className="button button-primary" // Add appropriate classes
+            className="button button-primary"
             onClick={nextStep}
             disabled={loading}
           >
@@ -265,7 +346,7 @@ const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ session, onOnboardingCo
           </button>
         ) : (
           <button
-            className="button button-primary" // Add appropriate classes
+            className="button button-primary"
             onClick={handleFinishOnboarding}
             disabled={loading}
           >

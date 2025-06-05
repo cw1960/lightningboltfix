@@ -731,4 +731,102 @@ document.addEventListener("DOMContentLoaded", function() {
     showMainAppView: !!window.showMainAppView,
     showOnboardingStep: !!window.showOnboardingStep
   });
+
+  // === LLM Configurations Management ===
+  async function fetchAndRenderLlmConfigs() {
+    const listEl = document.getElementById('llmConfigList');
+    const msgEl = document.getElementById('llmConfigMessage');
+    if (!listEl || !msgEl || !currentUser) return;
+    listEl.innerHTML = '';
+    msgEl.textContent = '';
+
+    // Fetch configs from Supabase
+    let { data: configs, error } = await supabase
+      .from('llm_user_configurations')
+      .select('*')
+      .eq('profile_id', currentUser.id)
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      msgEl.textContent = 'Failed to load LLM configurations.';
+      return;
+    }
+    if (!configs || configs.length === 0) {
+      listEl.innerHTML = '<li>No LLM configurations found.</li>';
+      return;
+    }
+
+    // Business rules: cannot delete only config, cannot delete default
+    const defaultConfig = configs.find(cfg => cfg.is_default);
+    configs.forEach(cfg => {
+      const li = document.createElement('li');
+      li.style.border = '1px solid #444';
+      li.style.borderRadius = '4px';
+      li.style.padding = '10px';
+      li.style.marginBottom = '10px';
+      li.style.background = '#2a2a2a';
+      li.style.display = 'flex';
+      li.style.justifyContent = 'space-between';
+      li.style.alignItems = 'center';
+
+      const infoDiv = document.createElement('div');
+      infoDiv.innerHTML = `<strong>${cfg.model_name}</strong> <span style='color:#aaa;font-size:0.9em;'>(${cfg.provider_type}${cfg.api_endpoint ? ' | ' + cfg.api_endpoint : ''})</span>`;
+      if (cfg.is_default) {
+        infoDiv.innerHTML += ' <span style="color:#4ade80;font-weight:bold;">Default</span>';
+      }
+      li.appendChild(infoDiv);
+
+      const btnDiv = document.createElement('div');
+      const delBtn = document.createElement('button');
+      delBtn.textContent = 'Delete';
+      delBtn.className = 'button button-danger';
+      delBtn.style.padding = '3px 6px';
+      delBtn.style.fontSize = '0.8em';
+      delBtn.disabled = configs.length <= 1 || cfg.is_default;
+      delBtn.onclick = async () => {
+        msgEl.textContent = '';
+        if (configs.length <= 1) {
+          msgEl.textContent = 'You cannot delete your only LLM configuration.';
+          return;
+        }
+        if (cfg.is_default) {
+          msgEl.textContent = 'Cannot delete the default configuration. Set another as default first.';
+          return;
+        }
+        if (!confirm(`Are you sure you want to delete the configuration "${cfg.model_name}"?`)) {
+          return;
+        }
+        delBtn.disabled = true;
+        delBtn.textContent = 'Deleting...';
+        const { error: delError } = await supabase
+          .from('llm_user_configurations')
+          .delete()
+          .eq('id', cfg.id);
+        if (delError) {
+          msgEl.textContent = delError.message || 'Failed to delete configuration.';
+          delBtn.disabled = false;
+          delBtn.textContent = 'Delete';
+        } else {
+          msgEl.style.color = '#47d47a';
+          msgEl.textContent = 'Configuration deleted successfully.';
+          setTimeout(() => { msgEl.textContent = ''; msgEl.style.color = '#f87171'; }, 3000);
+          await fetchAndRenderLlmConfigs();
+        }
+      };
+      btnDiv.appendChild(delBtn);
+      li.appendChild(btnDiv);
+      listEl.appendChild(li);
+    });
+  }
+
+  // Show LLM configs when settings tab is shown
+  const settingsTab = document.getElementById('settingsTab');
+  if (settingsTab) {
+    const observer = new MutationObserver(() => {
+      if (settingsTab.classList.contains('active') && currentUser) {
+        fetchAndRenderLlmConfigs();
+      }
+    });
+    observer.observe(settingsTab, { attributes: true, attributeFilter: ['class'] });
+  }
 });

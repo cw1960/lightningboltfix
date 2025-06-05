@@ -1,4 +1,4 @@
-// Background script for Lightning Bolt Fix extension
+// Background script for ProxLight Bolt Fix extension
 // import ExtPay from 'extpay'; // Revert this
 
 // --- ExtPay Initialization ---

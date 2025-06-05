@@ -51,17 +51,21 @@ const AuthFlow: React.FC = () => {
 
       if (signUpError) throw signUpError;
 
-      // Manually update the profile with the first name after sign up
-      // The trigger only inserts the ID.
+      // Upsert user profile to ensure data is saved
       if (signUpData.user) {
-        const { error: updateError } = await supabase
+        const { error: upsertError } = await supabase
           .from('profiles')
-          .update({ first_name: firstName })
-          .eq('id', signUpData.user.id);
+          .upsert([
+            { id: signUpData.user.id, first_name: firstName, email }
+          ], { onConflict: 'id' });
 
-        if (updateError) {
-           console.warn('Could not update first name after sign up:', updateError)
-           // Proceed anyway, user is signed up
+        if (upsertError) {
+          console.warn('Could not upsert profile after sign up:', upsertError);
+          alert("Profile upsert error: " + JSON.stringify(upsertError));
+          // Proceed anyway, user is signed up
+        } else {
+          // Poll for the profile row to appear
+          await waitForProfile(signUpData.user.id);
         }
       } else {
          console.warn('Sign up successful but no user data returned immediately.')
@@ -87,8 +91,8 @@ const AuthFlow: React.FC = () => {
       <div className="auth-header">
         {/* Add the logo image */}
         <img
-          src="https://i.imgur.com/twNKfqN.png"
-          alt="Lightning Bolt Fix Logo"
+          src="icons/icon128.png"
+          alt="Lightning Bolt Fix V3 Logo"
           style={{
             width: '90px',
             height: '90px',
@@ -97,7 +101,7 @@ const AuthFlow: React.FC = () => {
           }}
         />
         {/* Keep the H1 title below the logo */}
-        <h1>Lightning Bolt Fix</h1>
+        <h1>Lightning Bolt Fix V3</h1>
       </div>
 
       {isSignUp ? (
@@ -194,5 +198,18 @@ const AuthFlow: React.FC = () => {
     </div>
   );
 };
+
+async function waitForProfile(userId: string, maxAttempts = 10, delayMs = 500) {
+  for (let i = 0; i < maxAttempts; i++) {
+    const { data } = await supabase
+      .from('profiles')
+      .select('onboarding_complete')
+      .eq('id', userId)
+      .limit(1);
+    if (data && data.length > 0) return data[0];
+    await new Promise(resolve => setTimeout(resolve, delayMs));
+  }
+  throw new Error('Profile row did not appear in time');
+}
 
 export default AuthFlow; 
